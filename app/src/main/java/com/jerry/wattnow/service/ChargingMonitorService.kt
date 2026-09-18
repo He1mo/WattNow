@@ -28,7 +28,7 @@ import java.util.Locale
 class ChargingMonitorService : Service() {
 
     companion object {
-        const val CHANNEL_CHARGING_ID = "charging_monitor_active_v5"
+        const val CHANNEL_CHARGING_ID = "charging_monitor_active_v6"
         const val NOTIFICATION_ID = 1001
 
         fun startService(context: Context) {
@@ -126,7 +126,8 @@ class ChargingMonitorService : Service() {
                 "charging_monitor_v2",
                 "charging_monitor_channel",
                 "charging_monitor_resident_v4",
-                "charging_monitor_idle_v5"
+                "charging_monitor_idle_v5",
+                "charging_monitor_active_v5"
             )
             for (ch in legacyChannels) {
                 try {
@@ -134,11 +135,11 @@ class ChargingMonitorService : Service() {
                 } catch (_: Exception) {}
             }
 
-            // Active charging channel: LOW importance, PUBLIC lockscreen visibility
+            // Active charging channel: DEFAULT importance (ensures display on lockscreens), silent sound & vibration
             val chargingChannel = NotificationChannel(
                 CHANNEL_CHARGING_ID,
                 "充电中实时监测",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = "充电时在通知栏与锁屏展示实时功率、电流与电量"
                 setShowBadge(false)
@@ -192,7 +193,7 @@ class ChargingMonitorService : Service() {
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setShowWhen(false)
             .build()
