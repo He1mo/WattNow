@@ -12,6 +12,8 @@ class PowerConnectionReceiver : BroadcastReceiver() {
                 ChargingMonitorService.startService(context)
             }
             Intent.ACTION_POWER_DISCONNECTED -> {
+                val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                notificationManager?.cancel(ChargingMonitorService.NOTIFICATION_ID)
                 ChargingMonitorService.stopService(context)
             }
             Intent.ACTION_BOOT_COMPLETED,

@@ -129,8 +129,10 @@ class ThermalMonitor(private val context: Context) {
                 type.contains("shell") ||
                 type.contains("case") ||
                 type.contains("xo-therm") ||
-                type.contains("quiet-therm") ||
-                type.contains("chg-skin")
+                type.contains("xo_therm") ||
+                type.contains("quiet") ||
+                type.contains("chg-skin") ||
+                type.contains("chg_skin")
     }
 
     private fun readSingleTemp(file: File): Double? {

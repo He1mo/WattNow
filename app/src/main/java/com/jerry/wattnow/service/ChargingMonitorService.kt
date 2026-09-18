@@ -46,13 +46,24 @@ class ChargingMonitorService : Service() {
         }
     }
 
-    private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
+    @Volatile
+    private var isRunning = true
+    private var serviceJob = kotlinx.coroutines.SupervisorJob()
+    private var serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
     private lateinit var batteryMonitor: BatteryMonitor
     private lateinit var sessionManager: SessionManager
     private lateinit var notificationManager: NotificationManager
 
     @Volatile
     private var currentState: BatteryState = BatteryState()
+
+    private val powerDisconnectReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_POWER_DISCONNECTED) {
+                stopAndDismiss()
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -70,26 +81,31 @@ class ChargingMonitorService : Service() {
 
         // If not charging, cancel notification and exit immediately
         if (!currentState.isCharging) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            notificationManager.cancel(NOTIFICATION_ID)
-            stopSelf()
+            stopAndDismiss()
             return
         }
+
+        // Register immediate power disconnection listener
+        try {
+            registerReceiver(
+                powerDisconnectReceiver,
+                android.content.IntentFilter(Intent.ACTION_POWER_DISCONNECTED)
+            )
+        } catch (_: Exception) {}
 
         batteryMonitor.startMonitoring(serviceScope)
 
         // Observe battery states
         serviceScope.launch {
             batteryMonitor.batteryState.collectLatest { state ->
+                if (!isRunning) return@collectLatest
                 currentState = state
                 sessionManager.onBatteryStateChanged(state, serviceScope)
 
                 if (!state.isCharging) {
-                    // Unplugged: save session, dismiss notification immediately and stop service
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    notificationManager.cancel(NOTIFICATION_ID)
-                    stopSelf()
-                } else {
+                    // Unplugged: dismiss notification immediately and stop service
+                    stopAndDismiss()
+                } else if (isRunning) {
                     notificationManager.notify(NOTIFICATION_ID, buildNotification(state))
                 }
             }
@@ -97,9 +113,9 @@ class ChargingMonitorService : Service() {
 
         // Dedicated 1-second timer ticker for notification updates while charging
         serviceScope.launch {
-            while (isActive) {
+            while (isActive && isRunning) {
                 delay(1000)
-                if (currentState.isCharging) {
+                if (isRunning && currentState.isCharging) {
                     notificationManager.notify(NOTIFICATION_ID, buildNotification(currentState))
                 } else {
                     break
@@ -108,15 +124,28 @@ class ChargingMonitorService : Service() {
         }
     }
 
+    private fun stopAndDismiss() {
+        if (!isRunning) return
+        isRunning = false
+
+        try {
+            unregisterReceiver(powerDisconnectReceiver)
+        } catch (_: Exception) {}
+
+        serviceJob.cancel()
+        batteryMonitor.stopMonitoring()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        notificationManager.cancel(NOTIFICATION_ID)
+        stopSelf()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        batteryMonitor.stopMonitoring()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        notificationManager.cancel(NOTIFICATION_ID)
+        stopAndDismiss()
     }
 
     private fun createNotificationChannels() {
@@ -189,7 +218,6 @@ class ChargingMonitorService : Service() {
             .setContentText(content)
             .setSubText(subText)
             .setContentIntent(pendingIntent)
-            .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)

@@ -50,6 +50,8 @@ class MainActivity : ComponentActivity() {
                 if (state.isCharging) {
                     ChargingMonitorService.startService(this@MainActivity)
                 } else {
+                    val nm = getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                    nm?.cancel(ChargingMonitorService.NOTIFICATION_ID)
                     ChargingMonitorService.stopService(this@MainActivity)
                 }
             }
