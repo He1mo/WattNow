@@ -102,24 +102,35 @@ fun SimplePowerChart(
                 if (points.size < 2) return@Canvas
 
                 val stepX = width / (points.size - 1)
+                val coords = ArrayList<Offset>(points.size)
+                for (i in points.indices) {
+                    val x = i * stepX
+                    val norm = ((points[i] - minVal) / range).toFloat().coerceIn(0f, 1f)
+                    val y = bottomY - (norm * usableHeight)
+                    coords.add(Offset(x, y))
+                }
 
                 val linePath = Path()
                 val fillPath = Path()
 
+                linePath.moveTo(coords[0].x, coords[0].y)
                 fillPath.moveTo(0f, bottomY)
+                fillPath.lineTo(coords[0].x, coords[0].y)
 
-                points.forEachIndexed { index, value ->
-                    val x = index * stepX
-                    val norm = ((value - minVal) / range).toFloat().coerceIn(0f, 1f)
-                    val y = bottomY - (norm * usableHeight)
-
-                    if (index == 0) {
-                        linePath.moveTo(x, y)
-                        fillPath.lineTo(x, y)
-                    } else {
-                        linePath.lineTo(x, y)
-                        fillPath.lineTo(x, y)
-                    }
+                for (i in 1 until coords.size) {
+                    val prev = coords[i - 1]
+                    val cur = coords[i]
+                    val cX = (prev.x + cur.x) / 2f
+                    linePath.cubicTo(
+                        x1 = cX, y1 = prev.y,
+                        x2 = cX, y2 = cur.y,
+                        x3 = cur.x, y3 = cur.y
+                    )
+                    fillPath.cubicTo(
+                        x1 = cX, y1 = prev.y,
+                        x2 = cX, y2 = cur.y,
+                        x3 = cur.x, y3 = cur.y
+                    )
                 }
 
                 fillPath.lineTo(width, bottomY)
@@ -131,10 +142,21 @@ fun SimplePowerChart(
                     brush = Brush.verticalGradient(
                         colors = listOf(
                             lineColor.copy(alpha = 0.22f),
-                            lineColor.copy(alpha = 0.02f)
+                            lineColor.copy(alpha = 0.05f),
+                            Color.Transparent
                         ),
                         startY = topPadding,
                         endY = bottomY
+                    )
+                )
+
+                // Draw soft ambient glow stroke
+                drawPath(
+                    path = linePath,
+                    color = lineColor.copy(alpha = 0.22f),
+                    style = Stroke(
+                        width = 5.5.dp.toPx(),
+                        cap = StrokeCap.Round
                     )
                 )
 
@@ -149,21 +171,21 @@ fun SimplePowerChart(
                 )
 
                 // Draw last point halo & dot
-                val lastX = (points.size - 1) * stepX
-                val lastNorm = ((points.last() - minVal) / range).toFloat().coerceIn(0f, 1f)
-                val lastY = bottomY - (lastNorm * usableHeight)
-
-                // Outer halo
+                val last = coords.last()
                 drawCircle(
                     color = lineColor.copy(alpha = 0.25f),
                     radius = 7.dp.toPx(),
-                    center = Offset(lastX, lastY)
+                    center = last
                 )
-                // Inner solid dot
                 drawCircle(
                     color = lineColor,
                     radius = 3.5.dp.toPx(),
-                    center = Offset(lastX, lastY)
+                    center = last
+                )
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.9f),
+                    radius = 1.2.dp.toPx(),
+                    center = last
                 )
             }
         }

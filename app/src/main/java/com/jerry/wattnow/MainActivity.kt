@@ -60,12 +60,18 @@ class MainActivity : ComponentActivity() {
 
                 // 30 seconds rolling buffer (60 points at 500ms)
                 val recentPowerPoints = remember { mutableStateListOf<Double>() }
+                val recentTempPoints = remember { mutableStateListOf<Double>() }
                 val currentPower = state.powerW ?: 0.0
+                val currentTemp = state.temperatureC ?: (state.thermalState.batteryTempC ?: 0.0)
 
-                androidx.compose.runtime.LaunchedEffect(state.powerW) {
+                androidx.compose.runtime.LaunchedEffect(state.powerW, state.temperatureC) {
                     recentPowerPoints.add(currentPower)
                     if (recentPowerPoints.size > 60) {
                         recentPowerPoints.removeAt(0)
+                    }
+                    recentTempPoints.add(currentTemp)
+                    if (recentTempPoints.size > 60) {
+                        recentTempPoints.removeAt(0)
                     }
                 }
 
@@ -84,6 +90,7 @@ class MainActivity : ComponentActivity() {
                     MainScreen(
                         batteryState = state,
                         recentPowerPoints = recentPowerPoints,
+                        recentTempPoints = recentTempPoints,
                         historySessions = historySessions,
                         onSessionClick = { id -> selectedSessionId = id }
                     )

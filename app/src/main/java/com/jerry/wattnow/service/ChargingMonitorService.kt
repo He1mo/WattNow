@@ -28,7 +28,8 @@ import java.util.Locale
 class ChargingMonitorService : Service() {
 
     companion object {
-        const val CHANNEL_ID = "charging_monitor_resident_v4"
+        const val CHANNEL_CHARGING_ID = "charging_monitor_active_v5"
+        const val CHANNEL_IDLE_ID = "charging_monitor_idle_v5"
         const val NOTIFICATION_ID = 1001
 
         fun startService(context: Context) {
@@ -62,19 +63,28 @@ class ChargingMonitorService : Service() {
         sessionManager = SessionManager(this)
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification(BatteryState(isCharging = false)))
+        createNotificationChannels()
+        currentState = batteryMonitor.getImmediateBatteryState()
+        startForeground(NOTIFICATION_ID, buildNotification(currentState))
 
         batteryMonitor.startMonitoring(serviceScope)
 
         // Observe battery states
         serviceScope.launch {
+            var prevCharging = currentState.isCharging
+            var prevLevel = currentState.batteryLevel
             batteryMonitor.batteryState.collectLatest { state ->
-                val prevCharging = currentState.isCharging
+                val chargingChanged = (prevCharging != state.isCharging)
+                val levelChanged = (prevLevel != state.batteryLevel)
+                prevCharging = state.isCharging
+                prevLevel = state.batteryLevel
                 currentState = state
+
                 sessionManager.onBatteryStateChanged(state, serviceScope)
-                // When state changes or charging status transitions, update resident notification immediately
-                if (!state.isCharging || prevCharging != state.isCharging) {
+
+                // When charging status transitions, update resident notification immediately.
+                // When in idle/discharging state, only update if the battery level changes (saving CPU).
+                if (chargingChanged || (!state.isCharging && levelChanged)) {
                     notificationManager.notify(NOTIFICATION_ID, buildNotification(currentState))
                 }
             }
@@ -100,26 +110,47 @@ class ChargingMonitorService : Service() {
         batteryMonitor.stopMonitoring()
     }
 
-    private fun createNotificationChannel() {
+    private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Clean up legacy high-importance channels to prevent heads-up banners
-            try {
-                notificationManager.deleteNotificationChannel("charging_monitor_v2")
-                notificationManager.deleteNotificationChannel("charging_monitor_channel")
-            } catch (_: Exception) {}
+            // Clean up legacy channels to prevent outdated settings/banners
+            val legacyChannels = listOf(
+                "charging_monitor_v2",
+                "charging_monitor_channel",
+                "charging_monitor_resident_v4"
+            )
+            for (ch in legacyChannels) {
+                try {
+                    notificationManager.deleteNotificationChannel(ch)
+                } catch (_: Exception) {}
+            }
 
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "实时电池监测",
+            // 1. Active charging channel: LOW importance, PUBLIC lockscreen visibility
+            val chargingChannel = NotificationChannel(
+                CHANNEL_CHARGING_ID,
+                "充电中实时监测",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "在通知栏与锁屏常驻展示实时功率与电池状态"
+                description = "充电时在通知栏与锁屏展示实时功率、电流与电量"
                 setShowBadge(false)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setSound(null, null)
                 enableVibration(false)
             }
-            notificationManager.createNotificationChannel(channel)
+            notificationManager.createNotificationChannel(chargingChannel)
+
+            // 2. Idle / Discharging channel: MIN importance, SECRET lockscreen visibility (hidden on lockscreen)
+            val idleChannel = NotificationChannel(
+                CHANNEL_IDLE_ID,
+                "非充电静默待机",
+                NotificationManager.IMPORTANCE_MIN
+            ).apply {
+                description = "非充电时在后台静默保活，不在锁屏显示"
+                setShowBadge(false)
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
+                setSound(null, null)
+                enableVibration(false)
+            }
+            notificationManager.createNotificationChannel(idleChannel)
         }
     }
 
@@ -134,55 +165,68 @@ class ChargingMonitorService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val largeIcon = try {
-            BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
-        } catch (_: Exception) {
-            null
-        }
-
-        val title: String
-        val content: String
-        val subText: String
+        val channelId = if (state.isCharging) CHANNEL_CHARGING_ID else CHANNEL_IDLE_ID
 
         if (state.isCharging) {
+            val largeIcon = try {
+                BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
+            } catch (_: Exception) {
+                null
+            }
+
             val powerText = if (state.powerW != null) String.format(Locale.US, "%.1f W", state.powerW) else "-- W"
             val levelText = if (state.batteryLevel != null) "${state.batteryLevel}%" else "--%"
             val currentText = if (state.currentA != null) String.format(Locale.US, "%.2f A", state.currentA) else "-- A"
             val tempText = if (state.temperatureC != null) String.format(Locale.US, "%.1f°C", state.temperatureC) else "--°C"
             val voltageText = if (state.voltageV != null) String.format(Locale.US, "%.2f V", state.voltageV) else "-- V"
 
-            title = "$powerText · 电量 $levelText"
-            content = "电流 $currentText · 电压 $voltageText · 温度 $tempText"
-            subText = "WattNow 充电中"
+            val title = "$powerText · 电量 $levelText"
+            val content = "电流 $currentText · 电压 $voltageText · 温度 $tempText"
+            val subText = "WattNow 充电中"
+
+            return NotificationCompat.Builder(this, channelId)
+                .setSmallIcon(R.drawable.ic_notification)
+                .apply {
+                    if (largeIcon != null) {
+                        setLargeIcon(largeIcon)
+                    }
+                }
+                .setContentTitle(title)
+                .setContentText(content)
+                .setSubText(subText)
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setSilent(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .setShowWhen(false)
+                .build()
         } else {
+            // Idle / Discharging:
+            // VISIBILITY_SECRET: Completely hidden on lockscreen
+            // PRIORITY_MIN: Minimized and collapsed in notification shade
             val levelText = if (state.batteryLevel != null) "${state.batteryLevel}%" else "--%"
             val tempText = if (state.temperatureC != null) String.format(Locale.US, "%.1f°C", state.temperatureC) else "--°C"
             val voltageText = if (state.voltageV != null) String.format(Locale.US, "%.2f V", state.voltageV) else "-- V"
 
-            title = "未在充电 · 电量 $levelText"
-            content = "电压 $voltageText · 温度 $tempText · 常驻待机中"
-            subText = "WattNow 监测就绪"
+            val title = "WattNow 待机中 · 电量 $levelText"
+            val content = "电压 $voltageText · 温度 $tempText"
+
+            return NotificationCompat.Builder(this, channelId)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setSilent(true)
+                .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+                .setPriority(NotificationCompat.PRIORITY_MIN)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .setShowWhen(false)
+                .build()
         }
-
-        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
-            .apply {
-                if (largeIcon != null) {
-                    setLargeIcon(largeIcon)
-                }
-            }
-            .setContentTitle(title)
-            .setContentText(content)
-            .setSubText(subText)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setSilent(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .setShowWhen(false)
-
-        return builder.build()
     }
 }

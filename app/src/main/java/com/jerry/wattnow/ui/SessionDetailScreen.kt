@@ -1,6 +1,7 @@
 package com.jerry.wattnow.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,11 +11,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -34,13 +37,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jerry.wattnow.data.ChargingSampleEntity
 import com.jerry.wattnow.data.ChargingSessionEntity
 import com.jerry.wattnow.session.SessionManager
-import com.jerry.wattnow.ui.components.SimplePowerChart
+import com.jerry.wattnow.ui.components.ChartDisplayMode
+import com.jerry.wattnow.ui.components.DualMetricChart
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -55,6 +61,7 @@ fun SessionDetailScreen(
     var session by remember { mutableStateOf<ChargingSessionEntity?>(null) }
     var samples by remember { mutableStateOf<List<ChargingSampleEntity>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var chartMode by remember { mutableStateOf(ChartDisplayMode.COMBINED) }
 
     LaunchedEffect(sessionId) {
         val (s, sampleList) = sessionManager.getSessionDetail(sessionId)
@@ -70,7 +77,7 @@ fun SessionDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            imageVector = Icons.Default.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "返回"
                         )
                     }
@@ -114,6 +121,15 @@ fun SessionDetailScreen(
         val levelDelta = endLvl - item.startBatteryLevel
         val deltaStr = if (levelDelta >= 0) "+$levelDelta%" else "$levelDelta%"
 
+        val startTemp = item.startTemperatureC
+        val endTemp = item.endTemperatureC ?: item.maxTemperatureC
+        val maxTemp = item.maxTemperatureC
+        val tempDelta = maxTemp - startTemp
+        val tempDeltaStr = if (tempDelta >= 0) "+${String.format(Locale.US, "%.1f°C", tempDelta)}" else String.format(Locale.US, "%.1f°C", tempDelta)
+
+        val powerPoints = samples.map { it.powerW }
+        val tempPoints = samples.map { it.temperatureC }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -122,11 +138,11 @@ fun SessionDetailScreen(
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Power Curve Canvas Card
+            // Power & Temperature Curve Card
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(240.dp),
+                    .height(252.dp),
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
@@ -135,63 +151,151 @@ fun SessionDetailScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(16.dp)
+                        .padding(14.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "功率走势曲线",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 0.5.sp
-                            ),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
-
-                        // Total metrics
+                        // Left: Title & Mode Switcher
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "峰值 " + String.format(Locale.US, "%.1fW", item.peakPowerW),
+                                text = "全周期曲线",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp
+                                    letterSpacing = 0.5.sp
                                 ),
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                             )
-                            Text(
-                                text = "均值 " + String.format(Locale.US, "%.1fW", item.averagePowerW),
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Medium,
-                                    fontSize = 11.sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "能量 " + String.format(Locale.US, "%.2fWh", item.estimatedEnergyWh),
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 11.sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+
+                            // Mode Switcher Pills
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
+                                    .padding(2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                ChartDisplayMode.entries.forEach { mode ->
+                                    val isSelected = chartMode == mode
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(
+                                                if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
+                                            )
+                                            .clickable { chartMode = mode }
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = mode.label,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 10.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            ),
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Right: Dynamic Key Metrics based on mode
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            when (chartMode) {
+                                ChartDisplayMode.COMBINED -> {
+                                    Text(
+                                        text = "峰值 " + String.format(Locale.US, "%.1fW", item.peakPowerW),
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 10.5.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "最高 " + String.format(Locale.US, "%.1f°C", maxTemp),
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 10.5.sp
+                                        ),
+                                        color = Color(0xFFFF9E44)
+                                    )
+                                }
+                                ChartDisplayMode.POWER_ONLY -> {
+                                    Text(
+                                        text = "峰值 " + String.format(Locale.US, "%.1fW", item.peakPowerW),
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 10.5.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "均值 " + String.format(Locale.US, "%.1fW", item.averagePowerW),
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Medium,
+                                            fontSize = 10.5.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "能量 " + String.format(Locale.US, "%.1fWh", item.estimatedEnergyWh),
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 10.5.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                ChartDisplayMode.TEMP_ONLY -> {
+                                    Text(
+                                        text = "最高 " + String.format(Locale.US, "%.1f°C", maxTemp),
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 10.5.sp
+                                        ),
+                                        color = Color(0xFFFF9E44)
+                                    )
+                                    Text(
+                                        text = "温升 " + tempDeltaStr,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 10.5.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    val powerPoints = samples.map { it.powerW }
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                        if (powerPoints.size >= 2) {
-                            SimplePowerChart(
-                                points = powerPoints,
-                                customMaxVal = item.peakPowerW,
-                                lineColor = MaterialTheme.colorScheme.primary
+                        val hasPower = powerPoints.size >= 2
+                        val hasTemp = tempPoints.size >= 2
+                        val canRender = when (chartMode) {
+                            ChartDisplayMode.COMBINED -> hasPower || hasTemp
+                            ChartDisplayMode.POWER_ONLY -> hasPower
+                            ChartDisplayMode.TEMP_ONLY -> hasTemp
+                        }
+
+                        if (canRender) {
+                            DualMetricChart(
+                                powerPoints = powerPoints,
+                                tempPoints = tempPoints,
+                                displayMode = chartMode,
+                                customMaxPower = item.peakPowerW,
+                                customMaxTemp = item.maxTemperatureC,
+                                powerLineColor = MaterialTheme.colorScheme.primary,
+                                tempLineColor = Color(0xFFFF9E44)
                             )
                         } else {
                             Text(
@@ -206,7 +310,7 @@ fun SessionDetailScreen(
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(end = 46.dp),
+                        modifier = Modifier.fillMaxWidth().padding(end = 52.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
@@ -238,11 +342,15 @@ fun SessionDetailScreen(
                     DetailRow(label = "开始时间", value = startStr)
                     DetailRow(label = "结束时间", value = endStr)
                     DetailRow(label = "充电时长", value = "$durationMins 分钟")
-                    DetailRow(label = "电量变化", value = "${item.startBatteryLevel}% → $endLvl% ($deltaStr)")
-                    DetailRow(label = "平均功率", value = String.format(Locale.US, "%.1f W", item.averagePowerW))
-                    DetailRow(label = "峰值功率", value = String.format(Locale.US, "%.1f W", item.peakPowerW))
-                    DetailRow(label = "充入能量", value = String.format(Locale.US, "%.2f Wh", item.estimatedEnergyWh))
-                    DetailRow(label = "最高温度", value = String.format(Locale.US, "%.1f°C", item.maxTemperatureC))
+                    DetailRow(label = "电量变化", value = "${item.startBatteryLevel}% → $endLvl% ($deltaStr)", indicatorColor = Color(0xFF80C2FF))
+                    DetailRow(label = "平均功率", value = String.format(Locale.US, "%.1f W", item.averagePowerW), indicatorColor = MaterialTheme.colorScheme.primary)
+                    DetailRow(label = "峰值功率", value = String.format(Locale.US, "%.1f W", item.peakPowerW), indicatorColor = MaterialTheme.colorScheme.primary)
+                    DetailRow(label = "充入能量", value = String.format(Locale.US, "%.2f Wh", item.estimatedEnergyWh), indicatorColor = MaterialTheme.colorScheme.primary)
+                    DetailRow(
+                        label = "温度变化",
+                        value = "${String.format(Locale.US, "%.1f°C", startTemp)} → ${String.format(Locale.US, "%.1f°C", endTemp)} (最高 ${String.format(Locale.US, "%.1f°C", maxTemp)}, $tempDeltaStr)",
+                        indicatorColor = Color(0xFFFF9E44)
+                    )
                     DetailRow(label = "充电方式", value = item.plugType)
                 }
             }
@@ -251,17 +359,34 @@ fun SessionDetailScreen(
 }
 
 @Composable
-fun DetailRow(label: String, value: String) {
+fun DetailRow(
+    label: String,
+    value: String,
+    indicatorColor: Color? = null
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (indicatorColor != null) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(indicatorColor)
+                )
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),

@@ -1,4 +1,4 @@
-﻿package com.jerry.wattnow
+package com.jerry.wattnow
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -19,6 +19,7 @@ import kotlin.math.abs
 class BatteryMonitor(private val context: Context) {
 
     private val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+    private val thermalMonitor = ThermalMonitor(context)
     private val _batteryState = MutableStateFlow(BatteryState())
     val batteryState: StateFlow<BatteryState> = _batteryState.asStateFlow()
 
@@ -36,7 +37,13 @@ class BatteryMonitor(private val context: Context) {
         }
     }
 
+    fun getImmediateBatteryState(): BatteryState {
+        updateBatteryState()
+        return _batteryState.value
+    }
+
     fun startMonitoring(scope: CoroutineScope) {
+        thermalMonitor.initScanner(scope)
         if (pollJob?.isActive == true) return
 
         val initialIntent = context.registerReceiver(
@@ -50,7 +57,8 @@ class BatteryMonitor(private val context: Context) {
         pollJob = scope.launch(Dispatchers.Default) {
             while (isActive) {
                 updateBatteryState()
-                delay(500)
+                val isCharging = _batteryState.value.isCharging
+                delay(if (isCharging) 500L else 2000L)
             }
         }
     }
@@ -171,6 +179,8 @@ class BatteryMonitor(private val context: Context) {
             calculatedPowerW = 0.0
         }
 
+        val thermalState = thermalMonitor.getThermalState(temperatureC)
+
         _batteryState.value = BatteryState(
             isCharging = isPlugged && isCharging,
             powerW = calculatedPowerW,
@@ -180,7 +190,8 @@ class BatteryMonitor(private val context: Context) {
             batteryLevel = batteryLevel,
             temperatureC = temperatureC,
             chargingStatus = chargingStatus,
-            plugType = plugType
+            plugType = plugType,
+            thermalState = thermalState
         )
     }
 }
