@@ -10,6 +10,7 @@ import android.content.Intent
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.jerry.wattnow.BatteryMonitor
 import com.jerry.wattnow.BatteryState
@@ -53,6 +54,7 @@ class ChargingMonitorService : Service() {
     private lateinit var batteryMonitor: BatteryMonitor
     private lateinit var sessionManager: SessionManager
     private lateinit var notificationManager: NotificationManager
+    private var wakeLock: PowerManager.WakeLock? = null
 
     @Volatile
     private var currentState: BatteryState = BatteryState()
@@ -70,8 +72,18 @@ class ChargingMonitorService : Service() {
     override fun onCreate() {
         super.onCreate()
         batteryMonitor = BatteryMonitor(this)
-        sessionManager = SessionManager(this)
+        sessionManager = SessionManager.getInstance(this)
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        // Prevent CPU suspend while charging to guarantee continuous power sampling
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        wakeLock = powerManager?.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "WattNow:ChargingMonitorWakeLock"
+        )?.apply {
+            setReferenceCounted(false)
+            acquire(6 * 3600 * 1000L) // Max 6 hours safety timeout
+        }
 
         createNotificationChannels()
         currentState = batteryMonitor.getImmediateBatteryState()
@@ -134,6 +146,12 @@ class ChargingMonitorService : Service() {
 
         serviceJob.cancel()
         batteryMonitor.stopMonitoring()
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (_: Exception) {}
+        wakeLock = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         notificationManager.cancel(NOTIFICATION_ID)
         stopSelf()

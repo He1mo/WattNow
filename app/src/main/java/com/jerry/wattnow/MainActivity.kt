@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         batteryMonitor = BatteryMonitor(this)
-        sessionManager = SessionManager(this)
+        sessionManager = SessionManager.getInstance(this)
 
         requestNotificationPermissionIfNeeded()
 

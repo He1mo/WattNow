@@ -1,4 +1,4 @@
-﻿package com.jerry.wattnow.session
+package com.jerry.wattnow.session
 
 import android.content.Context
 import android.util.Log
@@ -15,7 +15,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 
-class SessionManager(context: Context) {
+class SessionManager private constructor(context: Context) {
+
+    companion object {
+        @Volatile
+        private var instance: SessionManager? = null
+
+        fun getInstance(context: Context): SessionManager {
+            return instance ?: synchronized(this) {
+                instance ?: SessionManager(context.applicationContext).also { instance = it }
+            }
+        }
+    }
 
     private val dbHelper = AppDatabaseHelper(context)
 
@@ -104,7 +115,7 @@ class SessionManager(context: Context) {
         sampleJob?.cancel()
         sampleJob = scope.launch(Dispatchers.IO) {
             while (isActive && activeSessionId == sessionId) {
-                delay(10_000) // Sample every 10 seconds
+                delay(5_000) // Sample every 5 seconds for finer curve resolution
                 val state = latestBatteryState
                 if (state.isCharging && activeSessionId == sessionId) {
                     val now = System.currentTimeMillis()
