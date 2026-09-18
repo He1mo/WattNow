@@ -43,13 +43,15 @@ class MainActivity : ComponentActivity() {
 
         requestNotificationPermissionIfNeeded()
 
-        // Ensure resident service is running silently in background
-        ChargingMonitorService.startService(this)
-
-        // Observe battery states for SessionManager
+        // Observe battery states for SessionManager and manage Service strictly based on charging state
         lifecycleScope.launch {
             batteryMonitor.batteryState.collectLatest { state ->
                 sessionManager.onBatteryStateChanged(state, lifecycleScope)
+                if (state.isCharging) {
+                    ChargingMonitorService.startService(this@MainActivity)
+                } else {
+                    ChargingMonitorService.stopService(this@MainActivity)
+                }
             }
         }
 

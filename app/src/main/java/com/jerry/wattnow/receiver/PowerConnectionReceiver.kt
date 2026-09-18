@@ -8,10 +8,18 @@ import com.jerry.wattnow.service.ChargingMonitorService
 class PowerConnectionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         when (intent?.action) {
-            Intent.ACTION_POWER_CONNECTED,
+            Intent.ACTION_POWER_CONNECTED -> {
+                ChargingMonitorService.startService(context)
+            }
+            Intent.ACTION_POWER_DISCONNECTED -> {
+                ChargingMonitorService.stopService(context)
+            }
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
-                ChargingMonitorService.startService(context)
+                val monitor = com.jerry.wattnow.BatteryMonitor(context)
+                if (monitor.getImmediateBatteryState().isCharging) {
+                    ChargingMonitorService.startService(context)
+                }
             }
         }
     }
