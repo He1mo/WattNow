@@ -37,8 +37,8 @@
 ## 编译与安装
 
 ```bash
-# 安装已编译完成的正式版 V1.2 安装包：
-adb install -r WattNow-v1.2.apk
+# 安装已编译完成的正式版 V1.2.2 安装包：
+adb install -r WattNow-v1.2.2.apk
 
 # 或编译 Release / Debug APK：
 ./gradlew assembleRelease
