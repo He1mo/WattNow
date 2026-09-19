@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.jerry.wattnow.protocol.ChargingProtocolDetector
 import kotlin.math.abs
 
 class BatteryMonitor(private val context: Context) {
@@ -177,9 +178,20 @@ class BatteryMonitor(private val context: Context) {
             }
         } else {
             calculatedPowerW = 0.0
+            peakPowerW = 0.0
         }
 
         val thermalState = thermalMonitor.getThermalState(temperatureC)
+
+        val maxNegotiatedPowerW = ChargingProtocolDetector.extractMaxNegotiatedPower(batteryIntent)
+        val protocolInfo = ChargingProtocolDetector.detect(
+            isCharging = isPlugged && isCharging,
+            plugType = plugType,
+            currentPowerW = calculatedPowerW,
+            sessionPeakPowerW = if (peakPowerW > 0.0) peakPowerW else null,
+            voltageV = voltageV,
+            maxNegotiatedPowerW = maxNegotiatedPowerW
+        )
 
         _batteryState.value = BatteryState(
             isCharging = isPlugged && isCharging,
@@ -191,7 +203,8 @@ class BatteryMonitor(private val context: Context) {
             temperatureC = temperatureC,
             chargingStatus = chargingStatus,
             plugType = plugType,
-            thermalState = thermalState
+            thermalState = thermalState,
+            chargingProtocol = protocolInfo
         )
     }
 }

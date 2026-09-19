@@ -142,7 +142,7 @@ fun SessionDetailScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(252.dp),
+                    .height(280.dp),
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
@@ -245,14 +245,6 @@ fun SessionDetailScreen(
                                         ),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                    Text(
-                                        text = "能量 " + String.format(Locale.US, "%.1fWh", item.estimatedEnergyWh),
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 10.5.sp
-                                        ),
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
                                 }
                                 ChartDisplayMode.TEMP_ONLY -> {
                                     Text(
@@ -276,7 +268,35 @@ fun SessionDetailScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Dedicated Record Time Period Description
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "时间段: $startStr 至 $endStr",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                            )
+                            Text(
+                                text = "共 $durationMins 分钟 · 滑动可查点",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         val hasPower = powerPoints.size >= 2
@@ -291,11 +311,15 @@ fun SessionDetailScreen(
                             DualMetricChart(
                                 powerPoints = powerPoints,
                                 tempPoints = tempPoints,
+                                sampleTimestamps = samples.map { it.timestamp },
+                                sampleBatteryLevels = samples.map { it.batteryLevel },
+                                totalDurationMillis = item.durationMillis,
                                 displayMode = chartMode,
                                 customMaxPower = item.peakPowerW,
                                 customMaxTemp = item.maxTemperatureC,
                                 powerLineColor = MaterialTheme.colorScheme.primary,
-                                tempLineColor = Color(0xFFFF9E44)
+                                tempLineColor = Color(0xFFFF9E44),
+                                showXAxis = true
                             )
                         } else {
                             Text(
@@ -305,24 +329,6 @@ fun SessionDetailScreen(
                                 modifier = Modifier.align(Alignment.Center)
                             )
                         }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(end = 52.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = startStr,
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
-                        Text(
-                            text = endStr,
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
                     }
                 }
             }
@@ -351,6 +357,13 @@ fun SessionDetailScreen(
                         value = "${String.format(Locale.US, "%.1f°C", startTemp)} → ${String.format(Locale.US, "%.1f°C", endTemp)} (最高 ${String.format(Locale.US, "%.1f°C", maxTemp)}, $tempDeltaStr)",
                         indicatorColor = Color(0xFFFF9E44)
                     )
+                    if (item.chargerProtocol.isNotEmpty() && item.chargerProtocol != "未知协议") {
+                        DetailRow(
+                            label = "充电协议",
+                            value = item.chargerProtocol,
+                            indicatorColor = if (item.chargerProtocol.contains("秒充")) Color(0xFFFF9500) else Color(0xFF00C7BE)
+                        )
+                    }
                     DetailRow(label = "充电方式", value = item.plugType)
                 }
             }

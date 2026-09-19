@@ -17,7 +17,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -36,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import com.jerry.wattnow.BatteryState
 import com.jerry.wattnow.PlugType
 import com.jerry.wattnow.ThermalStatusLevel
+import com.jerry.wattnow.protocol.ProtocolCategory
 import com.jerry.wattnow.ui.components.ChartDisplayMode
 import com.jerry.wattnow.ui.components.DualMetricChart
 import com.jerry.wattnow.ui.components.SimplePowerChart
@@ -109,8 +112,13 @@ fun MonitorTab(
                 "峰值 --"
             }
 
-            val statusLabel = if (batteryState.isCharging) {
-                if (batteryState.plugType != PlugType.NONE && batteryState.plugType != PlugType.UNKNOWN) {
+            val protocol = batteryState.chargingProtocol
+            val isCharging = batteryState.isCharging
+
+            val statusLabel = if (isCharging) {
+                if (protocol.shortBadge.isNotEmpty() && protocol.shortBadge != "未连接") {
+                    "${batteryState.chargingStatus.label} · ${protocol.shortBadge}"
+                } else if (batteryState.plugType != PlugType.NONE && batteryState.plugType != PlugType.UNKNOWN) {
                     "${batteryState.chargingStatus.label} (${batteryState.plugType.label})"
                 } else {
                     batteryState.chargingStatus.label
@@ -136,6 +144,71 @@ fun MonitorTab(
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+
+            // Dedicated Protocol Chip (when charging)
+            if (isCharging && protocol.category != ProtocolCategory.DISCHARGING) {
+                Spacer(modifier = Modifier.height(8.dp))
+                val (badgeBg, badgeBorder, badgeTextColor) = when (protocol.category) {
+                    ProtocolCategory.XIAOMI_TURBO -> Triple(
+                        Color(0xFFFF9500).copy(alpha = 0.15f),
+                        Color(0xFFFF9500).copy(alpha = 0.45f),
+                        Color(0xFFFFB340)
+                    )
+                    ProtocolCategory.PD_PPS -> Triple(
+                        Color(0xFF00C7BE).copy(alpha = 0.15f),
+                        Color(0xFF00C7BE).copy(alpha = 0.45f),
+                        Color(0xFF30D5C8)
+                    )
+                    ProtocolCategory.QC_FAST, ProtocolCategory.QC_STANDARD -> Triple(
+                        Color(0xFF0A84FF).copy(alpha = 0.15f),
+                        Color(0xFF0A84FF).copy(alpha = 0.45f),
+                        Color(0xFF64D2FF)
+                    )
+                    ProtocolCategory.WIRELESS_TURBO, ProtocolCategory.WIRELESS_QI -> Triple(
+                        Color(0xFFBF5AF2).copy(alpha = 0.15f),
+                        Color(0xFFBF5AF2).copy(alpha = 0.45f),
+                        Color(0xFFDA8FFF)
+                    )
+                    else -> Triple(
+                        if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f),
+                        Color.Transparent,
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = badgeBg,
+                    border = BorderStroke(1.dp, badgeBorder),
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = protocol.protocolName,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp
+                            ),
+                            color = badgeTextColor
+                        )
+                        if (protocol.details.isNotEmpty()) {
+                            Text(
+                                text = " · ${protocol.details}",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 11.sp
+                                ),
+                                color = badgeTextColor.copy(alpha = 0.8f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -344,7 +417,7 @@ fun MonitorTab(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "1.0s 平滑样条",
+                        text = "过去 30 秒 · 拖动查点",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                     )
@@ -355,12 +428,14 @@ fun MonitorTab(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(120.dp)
+                        .height(140.dp)
                 ) {
                     if (recentPowerPoints.size >= 2) {
                         SimplePowerChart(
                             points = recentPowerPoints,
-                            lineColor = MaterialTheme.colorScheme.primary
+                            totalDurationMillis = 30_000L,
+                            lineColor = MaterialTheme.colorScheme.primary,
+                            showXAxis = true
                         )
                     } else {
                         Text(

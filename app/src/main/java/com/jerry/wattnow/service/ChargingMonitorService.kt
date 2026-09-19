@@ -15,6 +15,7 @@ import androidx.core.app.NotificationCompat
 import com.jerry.wattnow.BatteryMonitor
 import com.jerry.wattnow.BatteryState
 import com.jerry.wattnow.MainActivity
+import com.jerry.wattnow.PlugType
 import com.jerry.wattnow.R
 import com.jerry.wattnow.session.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -91,12 +92,6 @@ class ChargingMonitorService : Service() {
         // Comply with Android Foreground Service contract
         startForeground(NOTIFICATION_ID, buildNotification(currentState))
 
-        // If not charging, cancel notification and exit immediately
-        if (!currentState.isCharging) {
-            stopAndDismiss()
-            return
-        }
-
         // Register immediate power disconnection listener
         try {
             registerReceiver(
@@ -112,14 +107,32 @@ class ChargingMonitorService : Service() {
             batteryMonitor.batteryState.collectLatest { state ->
                 if (!isRunning) return@collectLatest
                 currentState = state
-                sessionManager.onBatteryStateChanged(state, serviceScope)
+                sessionManager.onBatteryStateChanged(state)
 
-                if (!state.isCharging) {
+                if (!state.isCharging && state.plugType == PlugType.NONE) {
                     // Unplugged: dismiss notification immediately and stop service
                     stopAndDismiss()
                 } else if (isRunning) {
                     notificationManager.notify(NOTIFICATION_ID, buildNotification(state))
                 }
+            }
+        }
+
+        // Hardware handshake grace period: if service was started via ACTION_POWER_CONNECTED,
+        // wait up to 5 seconds for PMIC charging handshake to complete before checking
+        serviceScope.launch {
+            var confirmedCharging = currentState.isCharging
+            var waitTicks = 0
+            while (isActive && isRunning && !confirmedCharging && waitTicks < 10) {
+                delay(500)
+                waitTicks++
+                if (batteryMonitor.getImmediateBatteryState().isCharging) {
+                    confirmedCharging = true
+                    break
+                }
+            }
+            if (!confirmedCharging && isRunning && !batteryMonitor.getImmediateBatteryState().isCharging) {
+                stopAndDismiss()
             }
         }
 
@@ -129,7 +142,7 @@ class ChargingMonitorService : Service() {
                 delay(1000)
                 if (isRunning && currentState.isCharging) {
                     notificationManager.notify(NOTIFICATION_ID, buildNotification(currentState))
-                } else {
+                } else if (!currentState.isCharging) {
                     break
                 }
             }
@@ -142,6 +155,15 @@ class ChargingMonitorService : Service() {
 
         try {
             unregisterReceiver(powerDisconnectReceiver)
+        } catch (_: Exception) {}
+
+        // Notify SessionManager that charging has ended
+        try {
+            val finalState = batteryMonitor.getImmediateBatteryState().copy(
+                isCharging = false,
+                plugType = PlugType.NONE
+            )
+            sessionManager.onBatteryStateChanged(finalState)
         } catch (_: Exception) {}
 
         serviceJob.cancel()
@@ -221,9 +243,14 @@ class ChargingMonitorService : Service() {
         val tempText = if (state.temperatureC != null) String.format(Locale.US, "%.1f°C", state.temperatureC) else "--°C"
         val voltageText = if (state.voltageV != null) String.format(Locale.US, "%.2f V", state.voltageV) else "-- V"
 
-        val title = "$powerText · 电量 $levelText"
+        val protocol = state.chargingProtocol
+        val badge = if (protocol.shortBadge.isNotEmpty() && protocol.shortBadge != "未连接") {
+            protocol.shortBadge
+        } else "充电中"
+
+        val title = "$powerText · $badge · 电量 $levelText"
         val content = "电流 $currentText · 电压 $voltageText · 温度 $tempText"
-        val subText = "WattNow 充电中"
+        val subText = if (protocol.protocolName != "未连接") protocol.protocolName else "WattNow 充电中"
 
         return NotificationCompat.Builder(this, CHANNEL_CHARGING_ID)
             .setSmallIcon(R.drawable.ic_notification)

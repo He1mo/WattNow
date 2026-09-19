@@ -237,17 +237,38 @@ fun HistorySessionCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                     )
 
-                    // Plug Type Badge
+                    // Protocol / Plug Type Badge
+                    val displayBadge = when {
+                        session.chargerProtocol.contains("秒充") -> "⚡ 澎湃秒充"
+                        session.chargerProtocol.contains("PD") || session.chargerProtocol.contains("PPS") -> "⚡ PD/PPS"
+                        session.chargerProtocol.contains("QC") -> "⚡ QC 快充"
+                        session.chargerProtocol.contains("无线") -> "🌀 无线"
+                        session.chargerProtocol.contains("10W") -> "标充 10W"
+                        session.chargerProtocol != "未知协议" && session.chargerProtocol != "未连接" -> session.chargerProtocol
+                        else -> session.plugType
+                    }
+
+                    val (chipBg, chipText) = when {
+                        displayBadge.contains("秒充") -> Pair(Color(0xFFFF9500).copy(alpha = 0.18f), Color(0xFFFF9F0A))
+                        displayBadge.contains("PD") || displayBadge.contains("PPS") -> Pair(Color(0xFF00C7BE).copy(alpha = 0.18f), Color(0xFF30D5C8))
+                        displayBadge.contains("QC") -> Pair(Color(0xFF0A84FF).copy(alpha = 0.18f), Color(0xFF64D2FF))
+                        displayBadge.contains("无线") -> Pair(Color(0xFFBF5AF2).copy(alpha = 0.18f), Color(0xFFDA8FFF))
+                        else -> Pair(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f), MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .background(chipBg)
+                            .padding(horizontal = 7.dp, vertical = 2.5.dp)
                     ) {
                         Text(
-                            text = session.plugType,
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = displayBadge,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = chipText
                         )
                     }
                 }

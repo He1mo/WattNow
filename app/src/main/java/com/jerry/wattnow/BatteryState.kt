@@ -1,5 +1,7 @@
 package com.jerry.wattnow
 
+import com.jerry.wattnow.protocol.ChargingProtocolInfo
+
 enum class PlugType(val label: String) {
     NONE("未连接"),
     AC("有线充电器"),
@@ -52,5 +54,6 @@ data class BatteryState(
     val temperatureC: Double? = null,
     val chargingStatus: BatteryChargingStatus = BatteryChargingStatus.UNKNOWN,
     val plugType: PlugType = PlugType.NONE,
-    val thermalState: DeviceThermalState = DeviceThermalState()
+    val thermalState: DeviceThermalState = DeviceThermalState(),
+    val chargingProtocol: ChargingProtocolInfo = ChargingProtocolInfo()
 )

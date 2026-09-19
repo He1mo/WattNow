@@ -46,7 +46,7 @@ class MainActivity : ComponentActivity() {
         // Observe battery states for SessionManager and manage Service strictly based on charging state
         lifecycleScope.launch {
             batteryMonitor.batteryState.collectLatest { state ->
-                sessionManager.onBatteryStateChanged(state, lifecycleScope)
+                sessionManager.onBatteryStateChanged(state)
                 if (state.isCharging) {
                     ChargingMonitorService.startService(this@MainActivity)
                 } else {

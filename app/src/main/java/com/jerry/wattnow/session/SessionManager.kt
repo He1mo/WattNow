@@ -9,6 +9,8 @@ import com.jerry.wattnow.data.ChargingSessionEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -29,10 +31,12 @@ class SessionManager private constructor(context: Context) {
     }
 
     private val dbHelper = AppDatabaseHelper(context)
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var activeSessionId: Long? = null
     private var sampleJob: Job? = null
     private var lastSampleTime: Long = 0L
+    private var lastSessionEndTime: Long = 0L
     private var hasInitialized = false
 
     @Volatile
@@ -47,19 +51,18 @@ class SessionManager private constructor(context: Context) {
             Pair(session, samples)
         }
 
-    fun onBatteryStateChanged(newState: BatteryState, scope: CoroutineScope) {
+    fun onBatteryStateChanged(newState: BatteryState) {
         val previousState = latestBatteryState
         latestBatteryState = newState
 
-        scope.launch(Dispatchers.IO) {
-            handleStateTransition(previousState, newState, scope)
+        managerScope.launch {
+            handleStateTransition(previousState, newState)
         }
     }
 
     private suspend fun handleStateTransition(
         previous: BatteryState,
-        current: BatteryState,
-        scope: CoroutineScope
+        current: BatteryState
     ) {
         if (!hasInitialized) {
             hasInitialized = true
@@ -68,20 +71,34 @@ class SessionManager private constructor(context: Context) {
                 if (current.isCharging) {
                     activeSessionId = uncompleted.id
                     lastSampleTime = System.currentTimeMillis()
-                    startPeriodicSampling(scope, uncompleted.id)
+                    startPeriodicSampling(uncompleted.id)
                 } else {
                     closeInterruptedSession(uncompleted)
                 }
             } else if (current.isCharging) {
                 // If App opens while already charging and no uncompleted session exists
-                startNewSession(current, scope)
+                startNewSession(current)
                 return
             }
         }
 
+        val now = System.currentTimeMillis()
+
         // State transition: Not charging -> Charging
         if (!previous.isCharging && current.isCharging && activeSessionId == null) {
-            startNewSession(current, scope)
+            // Anti-glitch cooldown: Prevent ghost session immediately after unplugging (system broadcast latency/jitter)
+            if (now - lastSessionEndTime < 3000L) {
+                Log.w("WattNow", "Ignoring transient charging transition within 3s cooldown (${now - lastSessionEndTime}ms)")
+                return
+            }
+            startNewSession(current)
+        }
+        // Self-healing Watchdog: If charging is active but sampleJob is unexpectedly dead, revive it immediately!
+        else if (current.isCharging && activeSessionId != null) {
+            if (sampleJob == null || sampleJob?.isActive != true) {
+                Log.w("WattNow", "SessionManager watchdog: sampleJob was inactive while charging, reviving now for session $activeSessionId")
+                startPeriodicSampling(activeSessionId!!)
+            }
         }
         // State transition: Charging -> Not charging
         else if (previous.isCharging && !current.isCharging && activeSessionId != null) {
@@ -89,7 +106,7 @@ class SessionManager private constructor(context: Context) {
         }
     }
 
-    private suspend fun startNewSession(state: BatteryState, scope: CoroutineScope) {
+    private suspend fun startNewSession(state: BatteryState) {
         val now = System.currentTimeMillis()
         val session = ChargingSessionEntity(
             startTime = now,
@@ -97,6 +114,7 @@ class SessionManager private constructor(context: Context) {
             startTemperatureC = state.temperatureC ?: 0.0,
             maxTemperatureC = state.temperatureC ?: 0.0,
             plugType = state.plugType.label,
+            chargerProtocol = state.chargingProtocol.protocolName,
             isCompleted = false
         )
         val id = dbHelper.insertSession(session)
@@ -108,12 +126,12 @@ class SessionManager private constructor(context: Context) {
             recordSample(id, now, state)
         }
 
-        startPeriodicSampling(scope, id)
+        startPeriodicSampling(id)
     }
 
-    private fun startPeriodicSampling(scope: CoroutineScope, sessionId: Long) {
+    private fun startPeriodicSampling(sessionId: Long) {
         sampleJob?.cancel()
-        sampleJob = scope.launch(Dispatchers.IO) {
+        sampleJob = managerScope.launch {
             while (isActive && activeSessionId == sessionId) {
                 delay(5_000) // Sample every 5 seconds for finer curve resolution
                 val state = latestBatteryState
@@ -154,29 +172,53 @@ class SessionManager private constructor(context: Context) {
         val newEnergy = currentSession.estimatedEnergyWh + addedEnergyWh
         val avgPower = dbHelper.getAvgPowerForSession(sessionId) ?: power
 
+        val currentProto = state.chargingProtocol.protocolName
+        val upgradedProtocol = if (currentProto != "未连接" && currentProto != "未知充电协议" && currentProto != "涓流充电 / 握手阶段") {
+            currentProto
+        } else {
+            currentSession.chargerProtocol
+        }
+
         dbHelper.updateSession(
             currentSession.copy(
                 peakPowerW = newPeak,
                 maxTemperatureC = newMaxTemp,
                 estimatedEnergyWh = newEnergy,
-                averagePowerW = avgPower
+                averagePowerW = avgPower,
+                chargerProtocol = upgradedProtocol
             )
         )
     }
 
-    private suspend fun endCurrentSession(state: BatteryState) {
-        val sessionId = activeSessionId ?: return
+    private suspend fun endCurrentSession(state: BatteryState) = withContext(NonCancellable + Dispatchers.IO) {
+        val sessionId = activeSessionId ?: return@withContext
         sampleJob?.cancel()
         sampleJob = null
         activeSessionId = null
-
         val now = System.currentTimeMillis()
-        val currentSession = dbHelper.getSessionById(sessionId) ?: return
+        lastSessionEndTime = now
+
+        val currentSession = dbHelper.getSessionById(sessionId) ?: return@withContext
         val duration = now - currentSession.startTime
+        val samples = dbHelper.getSamplesForSession(sessionId)
+
+        // If session was brief (< 5 seconds) or had <= 1 sample, discard it as a transient connection glitch or ghost session
+        if (duration < 5000L || samples.size <= 1) {
+            Log.i("WattNow", "Discarding transient ghost session $sessionId (duration=${duration}ms, samples=${samples.size})")
+            dbHelper.deleteSession(sessionId)
+            return@withContext
+        }
 
         val avgPower = dbHelper.getAvgPowerForSession(sessionId) ?: currentSession.averagePowerW
         val maxPower = dbHelper.getMaxPowerForSession(sessionId) ?: currentSession.peakPowerW
         val maxTemp = dbHelper.getMaxTemperatureForSession(sessionId) ?: currentSession.maxTemperatureC
+
+        val finalProto = state.chargingProtocol.protocolName
+        val finalProtocol = if (finalProto != "未连接" && finalProto != "未知充电协议" && finalProto != "涓流充电 / 握手阶段") {
+            finalProto
+        } else {
+            currentSession.chargerProtocol
+        }
 
         dbHelper.updateSession(
             currentSession.copy(
@@ -187,15 +229,23 @@ class SessionManager private constructor(context: Context) {
                 peakPowerW = maxPower,
                 averagePowerW = avgPower,
                 durationMillis = duration,
+                chargerProtocol = finalProtocol,
                 isCompleted = true
             )
         )
     }
 
     private suspend fun closeInterruptedSession(session: ChargingSessionEntity) {
-        val lastSample = dbHelper.getLastSampleForSession(session.id)
+        val samples = dbHelper.getSamplesForSession(session.id)
+        val lastSample = samples.lastOrNull()
         val finishTime = lastSample?.timestamp ?: session.startTime
         val duration = finishTime - session.startTime
+
+        if (duration < 5000L || samples.size <= 1) {
+            Log.i("WattNow", "Discarding uncompleted ghost session ${session.id} (duration=${duration}ms, samples=${samples.size})")
+            dbHelper.deleteSession(session.id)
+            return
+        }
 
         val avgPower = dbHelper.getAvgPowerForSession(session.id) ?: session.averagePowerW
         val maxPower = dbHelper.getMaxPowerForSession(session.id) ?: session.peakPowerW

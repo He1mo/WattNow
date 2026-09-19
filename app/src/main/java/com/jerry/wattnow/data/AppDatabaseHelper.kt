@@ -1,7 +1,8 @@
-﻿package com.jerry.wattnow.data
+package com.jerry.wattnow.data
 
 import android.content.ContentValues
 import android.content.Context
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
@@ -24,6 +25,7 @@ data class ChargingSessionEntity(
     val peakPowerW: Double = 0.0,
     val estimatedEnergyWh: Double = 0.0,
     val plugType: String,
+    val chargerProtocol: String = "未知协议",
     val durationMillis: Long = 0L,
     val isCompleted: Boolean = false
 )
@@ -43,7 +45,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     companion object {
         const val DATABASE_NAME = "wattnow.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
         private const val TAG = "WattNowDatabase"
     }
 
@@ -51,6 +53,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     val sessionsFlow: Flow<List<ChargingSessionEntity>> = _sessionsFlow.asStateFlow()
 
     init {
+        cleanUpInvalidSessions()
         refreshSessions()
     }
 
@@ -76,6 +79,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 peakPowerW REAL NOT NULL,
                 estimatedEnergyWh REAL NOT NULL,
                 plugType TEXT NOT NULL,
+                chargerProtocol TEXT NOT NULL DEFAULT '未知协议',
                 durationMillis INTEGER NOT NULL,
                 isCompleted INTEGER NOT NULL
             )
@@ -114,8 +118,11 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         while (currentV < newVersion) {
             when (currentV) {
                 1 -> {
-                    // Placeholder for future v1 -> v2 migration
-                    // Example: db.execSQL("ALTER TABLE charging_sessions ADD COLUMN chargerProtocol TEXT")
+                    try {
+                        db.execSQL("ALTER TABLE charging_sessions ADD COLUMN chargerProtocol TEXT NOT NULL DEFAULT '未知协议'")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to add chargerProtocol column", e)
+                    }
                 }
             }
             currentV++
@@ -127,11 +134,30 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         Log.w(TAG, "Downgrade requested from $oldVersion to $newVersion. Preserving data.")
     }
 
+    private fun Cursor.getChargerProtocolSafe(): String {
+        val idx = getColumnIndex("chargerProtocol")
+        return if (idx >= 0 && !isNull(idx)) getString(idx) else "未知协议"
+    }
+
+    fun cleanUpInvalidSessions() {
+        try {
+            val db = writableDatabase
+            db.execSQL(
+                "DELETE FROM charging_samples WHERE sessionId IN (SELECT id FROM charging_sessions WHERE durationMillis < 5000 AND isCompleted = 1)"
+            )
+            db.execSQL(
+                "DELETE FROM charging_sessions WHERE durationMillis < 5000 AND isCompleted = 1"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to clean up invalid sessions", e)
+        }
+    }
+
     fun refreshSessions() {
         val list = mutableListOf<ChargingSessionEntity>()
         val db = readableDatabase
         val cursor = db.rawQuery(
-            "SELECT * FROM charging_sessions WHERE isCompleted = 1 ORDER BY startTime DESC",
+            "SELECT * FROM charging_sessions WHERE isCompleted = 1 AND durationMillis >= 5000 ORDER BY startTime DESC",
             null
         )
         cursor.use { c ->
@@ -150,6 +176,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                         peakPowerW = c.getDouble(c.getColumnIndexOrThrow("peakPowerW")),
                         estimatedEnergyWh = c.getDouble(c.getColumnIndexOrThrow("estimatedEnergyWh")),
                         plugType = c.getString(c.getColumnIndexOrThrow("plugType")),
+                        chargerProtocol = c.getChargerProtocolSafe(),
                         durationMillis = c.getLong(c.getColumnIndexOrThrow("durationMillis")),
                         isCompleted = c.getInt(c.getColumnIndexOrThrow("isCompleted")) == 1
                     )
@@ -173,6 +200,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("peakPowerW", session.peakPowerW)
             put("estimatedEnergyWh", session.estimatedEnergyWh)
             put("plugType", session.plugType)
+            put("chargerProtocol", session.chargerProtocol)
             put("durationMillis", session.durationMillis)
             put("isCompleted", if (session.isCompleted) 1 else 0)
         }
@@ -195,6 +223,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("peakPowerW", session.peakPowerW)
             put("estimatedEnergyWh", session.estimatedEnergyWh)
             put("plugType", session.plugType)
+            put("chargerProtocol", session.chargerProtocol)
             put("durationMillis", session.durationMillis)
             put("isCompleted", if (session.isCompleted) 1 else 0)
         }
@@ -223,6 +252,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     peakPowerW = c.getDouble(c.getColumnIndexOrThrow("peakPowerW")),
                     estimatedEnergyWh = c.getDouble(c.getColumnIndexOrThrow("estimatedEnergyWh")),
                     plugType = c.getString(c.getColumnIndexOrThrow("plugType")),
+                    chargerProtocol = c.getChargerProtocolSafe(),
                     durationMillis = c.getLong(c.getColumnIndexOrThrow("durationMillis")),
                     isCompleted = c.getInt(c.getColumnIndexOrThrow("isCompleted")) == 1
                 )
@@ -251,6 +281,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     peakPowerW = c.getDouble(c.getColumnIndexOrThrow("peakPowerW")),
                     estimatedEnergyWh = c.getDouble(c.getColumnIndexOrThrow("estimatedEnergyWh")),
                     plugType = c.getString(c.getColumnIndexOrThrow("plugType")),
+                    chargerProtocol = c.getChargerProtocolSafe(),
                     durationMillis = c.getLong(c.getColumnIndexOrThrow("durationMillis")),
                     isCompleted = c.getInt(c.getColumnIndexOrThrow("isCompleted")) == 1
                 )
@@ -351,5 +382,12 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         cursor.use { c ->
             if (c.moveToFirst() && !c.isNull(0)) c.getDouble(0) else null
         }
+    }
+
+    suspend fun deleteSession(sessionId: Long) = withContext(Dispatchers.IO) {
+        val db = writableDatabase
+        db.delete("charging_samples", "sessionId = ?", arrayOf(sessionId.toString()))
+        db.delete("charging_sessions", "id = ?", arrayOf(sessionId.toString()))
+        refreshSessions()
     }
 }

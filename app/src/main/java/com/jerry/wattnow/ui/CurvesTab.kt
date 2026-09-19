@@ -134,13 +134,41 @@ fun CurvesTab(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Time window banner
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isDark) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.04f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "时间窗口: 实时滚动 30 秒",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
+                        Text(
+                            text = "滑动图表可查点",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Chart Canvas Box
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(180.dp)
+                        .height(200.dp)
                 ) {
                     val hasPower = recentPowerPoints.size >= 2
                     val hasTemp = recentTempPoints.size >= 2
@@ -154,9 +182,11 @@ fun CurvesTab(
                         DualMetricChart(
                             powerPoints = recentPowerPoints,
                             tempPoints = recentTempPoints,
+                            totalDurationMillis = 30_000L,
                             displayMode = chartMode,
                             powerLineColor = MaterialTheme.colorScheme.primary,
-                            tempLineColor = Color(0xFFFF9E44)
+                            tempLineColor = Color(0xFFFF9E44),
+                            showXAxis = true
                         )
                     } else {
                         Text(
