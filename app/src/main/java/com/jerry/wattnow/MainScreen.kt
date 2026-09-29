@@ -29,6 +29,8 @@ fun MainScreen(
     batteryState: BatteryState,
     recentPowerPoints: List<Double>,
     recentTempPoints: List<Double>,
+    recentLevelPoints: List<Int> = emptyList(),
+    activeSession: com.jerry.wattnow.session.ActiveSessionInfo? = null,
     historySessions: List<ChargingSessionEntity>,
     onSessionClick: (Long) -> Unit
 ) {
@@ -60,12 +62,14 @@ fun MainScreen(
                     0 -> MonitorTab(
                         batteryState = batteryState,
                         recentPowerPoints = recentPowerPoints,
-                        recentTempPoints = recentTempPoints
+                        recentTempPoints = recentTempPoints,
+                        activeSession = activeSession
                     )
                     1 -> CurvesTab(
                         batteryState = batteryState,
                         recentPowerPoints = recentPowerPoints,
-                        recentTempPoints = recentTempPoints
+                        recentTempPoints = recentTempPoints,
+                        recentLevelPoints = recentLevelPoints
                     )
                     2 -> HistoryTab(
                         sessions = historySessions,

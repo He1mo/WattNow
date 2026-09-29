@@ -18,7 +18,7 @@ class PowerConnectionReceiver : BroadcastReceiver() {
             }
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
-                val monitor = com.jerry.wattnow.BatteryMonitor(context)
+                val monitor = com.jerry.wattnow.BatteryMonitor.getInstance(context)
                 if (monitor.getImmediateBatteryState().isCharging) {
                     ChargingMonitorService.startService(context)
                 }

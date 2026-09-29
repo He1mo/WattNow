@@ -62,6 +62,7 @@ fun SessionDetailScreen(
     var samples by remember { mutableStateOf<List<ChargingSampleEntity>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var chartMode by remember { mutableStateOf(ChartDisplayMode.COMBINED) }
+    var chartClearSignal by remember { mutableStateOf(0) }
 
     LaunchedEffect(sessionId) {
         val (s, sampleList) = sessionManager.getSessionDetail(sessionId)
@@ -129,6 +130,29 @@ fun SessionDetailScreen(
 
         val powerPoints = samples.map { it.powerW }
         val tempPoints = samples.map { it.temperatureC }
+        val protocolDisplayName = when {
+            item.chargerProtocol.contains("秒充") -> "小米澎湃秒充"
+            item.chargerProtocol.contains("PD") || item.chargerProtocol.contains("PPS") -> "PD/PPS"
+            item.chargerProtocol.contains("QC 4") -> "QC 4+"
+            item.chargerProtocol.contains("QC 3") -> "QC 3.0"
+            item.chargerProtocol.contains("无线") -> "无线充电"
+            item.chargerProtocol.contains("DCP") || item.chargerProtocol.contains("10W") -> "标准充电"
+            else -> item.chargerProtocol
+        }
+        val protocolPowerLabel = when {
+            item.chargerProtocol.contains("120W") -> "120W"
+            item.chargerProtocol.contains("90W") -> "90W"
+            item.chargerProtocol.contains("67W") -> "67W"
+            item.chargerProtocol.contains("PD") || item.chargerProtocol.contains("PPS") -> "25W+"
+            item.chargerProtocol.contains("QC 4") -> "18–22.5W"
+            item.chargerProtocol.contains("QC 3") -> "18W"
+            item.chargerProtocol.contains("DCP") || item.chargerProtocol.contains("10W") -> "10W"
+            item.chargerProtocol.contains("USB 2.0") -> "2.5W"
+            item.chargerProtocol.contains("BC 1.2") -> "7.5W"
+            item.chargerProtocol.contains("无线秒充") -> "15W+"
+            item.chargerProtocol.contains("Qi") -> "5–10W"
+            else -> null
+        }
 
         Column(
             modifier = Modifier
@@ -142,7 +166,8 @@ fun SessionDetailScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(280.dp),
+                    .height(280.dp)
+                    .clickable { chartClearSignal++ },
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
@@ -164,7 +189,7 @@ fun SessionDetailScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "全周期曲线",
+                                text = "充电曲线",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.Bold,
                                     letterSpacing = 0.5.sp
@@ -264,6 +289,24 @@ fun SessionDetailScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
+                                ChartDisplayMode.BATTERY_ONLY -> {
+                                    Text(
+                                        text = "${item.startBatteryLevel}% → $endLvl%",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 10.5.sp
+                                        ),
+                                        color = Color(0xFF32ADE6)
+                                    )
+                                    Text(
+                                        text = deltaStr,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 10.5.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             }
                         }
                     }
@@ -284,12 +327,12 @@ fun SessionDetailScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "时间段: $startStr 至 $endStr",
+                                text = "$startStr – $endStr",
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                             )
                             Text(
-                                text = "共 $durationMins 分钟 · 滑动可查点",
+                                text = "$durationMins 分钟",
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold),
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -301,10 +344,12 @@ fun SessionDetailScreen(
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         val hasPower = powerPoints.size >= 2
                         val hasTemp = tempPoints.size >= 2
+                        val hasBattery = samples.size >= 2
                         val canRender = when (chartMode) {
                             ChartDisplayMode.COMBINED -> hasPower || hasTemp
                             ChartDisplayMode.POWER_ONLY -> hasPower
                             ChartDisplayMode.TEMP_ONLY -> hasTemp
+                            ChartDisplayMode.BATTERY_ONLY -> hasBattery
                         }
 
                         if (canRender) {
@@ -319,11 +364,12 @@ fun SessionDetailScreen(
                                 customMaxTemp = item.maxTemperatureC,
                                 powerLineColor = MaterialTheme.colorScheme.primary,
                                 tempLineColor = Color(0xFFFF9E44),
-                                showXAxis = true
+                                showXAxis = true,
+                                clearSelectionSignal = chartClearSignal
                             )
                         } else {
                             Text(
-                                text = "正在累积采样点...",
+                                text = "数据不足，继续充电后显示",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                                 modifier = Modifier.align(Alignment.Center)
@@ -349,6 +395,15 @@ fun SessionDetailScreen(
                     DetailRow(label = "结束时间", value = endStr)
                     DetailRow(label = "充电时长", value = "$durationMins 分钟")
                     DetailRow(label = "电量变化", value = "${item.startBatteryLevel}% → $endLvl% ($deltaStr)", indicatorColor = Color(0xFF80C2FF))
+                    if (levelDelta > 0 && durationMins >= 1) {
+                        val perMin = levelDelta.toDouble() / durationMins
+                        val perHour = perMin * 60.0
+                        DetailRow(
+                            label = "充入速率",
+                            value = String.format(Locale.US, "+%.1f%% / 小时 (约 %.2f%%/分)", perHour, perMin),
+                            indicatorColor = Color(0xFF80C2FF)
+                        )
+                    }
                     DetailRow(label = "平均功率", value = String.format(Locale.US, "%.1f W", item.averagePowerW), indicatorColor = MaterialTheme.colorScheme.primary)
                     DetailRow(label = "峰值功率", value = String.format(Locale.US, "%.1f W", item.peakPowerW), indicatorColor = MaterialTheme.colorScheme.primary)
                     DetailRow(label = "充入能量", value = String.format(Locale.US, "%.2f Wh", item.estimatedEnergyWh), indicatorColor = MaterialTheme.colorScheme.primary)
@@ -360,7 +415,7 @@ fun SessionDetailScreen(
                     if (item.chargerProtocol.isNotEmpty() && item.chargerProtocol != "未知协议") {
                         DetailRow(
                             label = "充电协议",
-                            value = item.chargerProtocol,
+                            value = protocolPowerLabel?.let { "$protocolDisplayName · $it" } ?: protocolDisplayName,
                             indicatorColor = if (item.chargerProtocol.contains("秒充")) Color(0xFFFF9500) else Color(0xFF00C7BE)
                         )
                     }

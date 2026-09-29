@@ -36,11 +36,19 @@
 
 ## 编译与安装
 
-```bash
-# 安装已编译完成的正式版 V1.2.4 安装包：
-adb install -r WattNow-v1.2.4.apk
+预编译安装包请从 [GitHub Releases](https://github.com/He1mo/WattNow/releases) 下载。仓库不跟踪 APK 文件。
 
-# 或编译 Release / Debug APK：
-./gradlew assembleRelease
+```powershell
+# Windows：构建并安装 Debug APK
+.\gradlew.bat assembleDebug
+adb install -r app\build\outputs\apk\debug\app-debug.apk
+```
+
+```bash
+# macOS / Linux：构建并安装 Debug APK
 ./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+# 构建 Release APK（需要配置 WATTNOW_* 正式签名环境变量）
+./gradlew assembleRelease
 ```

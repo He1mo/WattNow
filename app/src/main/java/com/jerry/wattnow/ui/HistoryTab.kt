@@ -101,7 +101,7 @@ fun HistoryTab(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "充电历史统计总览",
+                            text = "充电记录",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.5.sp
@@ -122,15 +122,20 @@ fun HistoryTab(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        val totalDeltaLevel = sessions.sumOf {
+                            val end = it.endBatteryLevel ?: it.startBatteryLevel
+                            maxOf(0, end - it.startBatteryLevel)
+                        }
                         val totalEnergy = sessions.sumOf { it.estimatedEnergyWh }
                         val maxPeak = sessions.maxOfOrNull { it.peakPowerW } ?: 0.0
                         val overallAvg = if (sessions.isNotEmpty()) sessions.map { it.averagePowerW }.average() else 0.0
 
-                        HistoryStatItem(label = "累计充入", value = String.format(Locale.US, "%.1f Wh", totalEnergy), isDark = isDark)
-                        HistoryStatItem(label = "最高功率", value = String.format(Locale.US, "%.1f W", maxPeak), isDark = isDark)
-                        HistoryStatItem(label = "综合均值", value = String.format(Locale.US, "%.1f W", overallAvg), isDark = isDark)
+                        HistoryStatItem(modifier = Modifier.weight(1f), label = "累计充入", value = "+$totalDeltaLevel%", isDark = isDark)
+                        HistoryStatItem(modifier = Modifier.weight(1f), label = "累计能量", value = String.format(Locale.US, "%.1f Wh", totalEnergy), isDark = isDark)
+                        HistoryStatItem(modifier = Modifier.weight(1f), label = "最高功率", value = String.format(Locale.US, "%.1f W", maxPeak), isDark = isDark)
+                        HistoryStatItem(modifier = Modifier.weight(1f), label = "平均功率", value = String.format(Locale.US, "%.1f W", overallAvg), isDark = isDark)
                     }
                 }
             }
@@ -143,30 +148,40 @@ fun HistoryTab(
 }
 
 @Composable
-fun HistoryStatItem(label: String, value: String, isDark: Boolean = true) {
+fun HistoryStatItem(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    isDark: Boolean = true
+) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(
                 if (isDark) Color.White.copy(alpha = 0.08f)
                 else Color.Black.copy(alpha = 0.05f)
             )
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .padding(horizontal = 6.dp, vertical = 8.dp)
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                maxLines = 1
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = value,
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
+                    fontSize = 13.5.sp
                 ),
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1
             )
         }
     }

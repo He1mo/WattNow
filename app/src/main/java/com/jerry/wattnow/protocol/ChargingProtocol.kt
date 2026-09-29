@@ -4,21 +4,22 @@ import android.content.Intent
 import android.os.BatteryManager
 import android.os.Build
 import com.jerry.wattnow.PlugType
+import java.util.Locale
 import kotlin.math.max
 
-enum class ProtocolCategory(val displayName: String, val shortBadge: String) {
-    XIAOMI_TURBO("小米澎湃秒充 (Mi Turbo Charge)", "⚡ 澎湃秒充"),
-    PD_PPS("USB-PD 3.0 / PPS 极速快充", "⚡ PD/PPS"),
-    QC_FAST("高通 QC 4+ / 18W-22.5W 快充", "⚡ QC 4+ / PD"),
-    QC_STANDARD("高通 QC 3.0 / 9V 快速充电", "⚡ QC 3.0 (9V)"),
-    STANDARD_AC("DCP 标准有线充电 (10W 档)", "标充 10W"),
-    TRICKLE_AC("涓流充电 / 握手阶段", "涓流握手"),
-    SLOW_USB("标准 USB 2.0 / PC 慢充", "USB 慢充"),
-    USB_BC("USB BC 1.2 (5V/1.5A)", "USB 快充"),
-    WIRELESS_TURBO("小米无线秒充 (Mi Wireless Turbo)", "🌀 无线秒充"),
-    WIRELESS_QI("Qi 标准无线充电", "Qi 无线充"),
-    DISCHARGING("未连接充电器", "未连接"),
-    UNKNOWN("未知充电协议", "未知协议")
+enum class ProtocolCategory(val displayName: String, val shortBadge: String, val priority: Int) {
+    XIAOMI_TURBO("小米澎湃秒充 (Mi Turbo Charge)", "⚡ 澎湃秒充", priority = 90),
+    PD_PPS("USB-PD 3.0 / PPS 极速快充", "⚡ PD/PPS", priority = 80),
+    WIRELESS_TURBO("小米无线秒充 (Mi Wireless Turbo)", "🌀 无线秒充", priority = 75),
+    QC_FAST("高通 QC 4+ / 18W-22.5W 快充", "⚡ QC 4+ / PD", priority = 70),
+    QC_STANDARD("高通 QC 3.0 / 9V 快速充电", "⚡ QC 3.0 (9V)", priority = 60),
+    WIRELESS_QI("Qi 标准无线充电", "Qi 无线充", priority = 50),
+    STANDARD_AC("DCP 标准有线充电 (10W 档)", "标充 10W", priority = 40),
+    USB_BC("USB BC 1.2 (5V/1.5A)", "USB 快充", priority = 30),
+    SLOW_USB("标准 USB 2.0 / PC 慢充", "USB 慢充", priority = 20),
+    TRICKLE_AC("涓流充电 / 握手阶段", "涓流握手", priority = 10),
+    UNKNOWN("未知充电协议", "未知协议", priority = 5),
+    DISCHARGING("未连接充电器", "未连接", priority = 0)
 }
 
 data class ChargingProtocolInfo(
@@ -28,7 +29,47 @@ data class ChargingProtocolInfo(
     val maxNegotiatedPowerW: Double? = null,
     val estimatedPeakW: Double = 0.0,
     val details: String = ""
-)
+) {
+    val theoreticalPowerLabel: String?
+        get() {
+            maxNegotiatedPowerW?.takeIf { it > 0.0 }?.let { power ->
+                return if (power % 1.0 < 0.05) {
+                    "${power.toInt()}W"
+                } else {
+                    String.format(Locale.US, "%.1fW", power)
+                }
+            }
+
+            return when (category) {
+                ProtocolCategory.XIAOMI_TURBO -> when {
+                    protocolName.contains("120W") -> "120W"
+                    protocolName.contains("90W") -> "90W"
+                    protocolName.contains("67W") -> "67W"
+                    else -> "40W+"
+                }
+                ProtocolCategory.PD_PPS -> "25W+"
+                ProtocolCategory.QC_FAST -> "18–22.5W"
+                ProtocolCategory.QC_STANDARD -> "18W"
+                ProtocolCategory.STANDARD_AC -> "10W"
+                ProtocolCategory.SLOW_USB -> "2.5W"
+                ProtocolCategory.USB_BC -> "7.5W"
+                ProtocolCategory.WIRELESS_TURBO -> "15W+"
+                ProtocolCategory.WIRELESS_QI -> "5–10W"
+                ProtocolCategory.TRICKLE_AC,
+                ProtocolCategory.DISCHARGING,
+                ProtocolCategory.UNKNOWN -> null
+            }
+        }
+
+    fun isSuperiorTo(other: ChargingProtocolInfo): Boolean {
+        if (this.category.priority != other.category.priority) {
+            return this.category.priority > other.category.priority
+        }
+        val thisPower = maxNegotiatedPowerW ?: estimatedPeakW
+        val otherPower = other.maxNegotiatedPowerW ?: other.estimatedPeakW
+        return thisPower >= otherPower
+    }
+}
 
 object ChargingProtocolDetector {
 
@@ -217,5 +258,58 @@ object ChargingProtocolDetector {
                 )
             }
         }
+    }
+
+    fun getCategoryFromProtocolName(name: String?): ProtocolCategory {
+        if (name.isNullOrBlank()) return ProtocolCategory.UNKNOWN
+        return when {
+            name.contains("秒充") && !name.contains("无线") -> ProtocolCategory.XIAOMI_TURBO
+            name.contains("无线秒充") -> ProtocolCategory.WIRELESS_TURBO
+            name.contains("PD") || name.contains("PPS") -> ProtocolCategory.PD_PPS
+            name.contains("QC 4") -> ProtocolCategory.QC_FAST
+            name.contains("QC 3") -> ProtocolCategory.QC_STANDARD
+            name.contains("Qi") || name.contains("无线") -> ProtocolCategory.WIRELESS_QI
+            name.contains("10W") || name.contains("DCP") -> ProtocolCategory.STANDARD_AC
+            name.contains("BC 1.2") -> ProtocolCategory.USB_BC
+            name.contains("USB 2.0") || name.contains("PC 慢充") -> ProtocolCategory.SLOW_USB
+            name.contains("涓流") || name.contains("握手") -> ProtocolCategory.TRICKLE_AC
+            name == "未连接" || name == "未连接充电器" -> ProtocolCategory.DISCHARGING
+            else -> ProtocolCategory.UNKNOWN
+        }
+    }
+
+    private fun extractWattageFromName(name: String): Double {
+        val match = Regex("""(\d+(\.\d+)?)W""").find(name)
+        return match?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0
+    }
+
+    fun selectHigherProtocol(existingName: String?, candidate: ChargingProtocolInfo): String {
+        if (candidate.category == ProtocolCategory.DISCHARGING ||
+            candidate.category == ProtocolCategory.UNKNOWN) {
+            return existingName ?: candidate.protocolName
+        }
+        if (existingName.isNullOrBlank() ||
+            existingName == "未连接" ||
+            existingName == "未知充电协议" ||
+            existingName == "涓流充电 / 握手阶段" ||
+            existingName == "正在识别协议"
+        ) {
+            return candidate.protocolName
+        }
+        if (candidate.category == ProtocolCategory.TRICKLE_AC) {
+            return existingName
+        }
+
+        val existingCat = getCategoryFromProtocolName(existingName)
+        if (candidate.category.priority > existingCat.priority) {
+            return candidate.protocolName
+        } else if (candidate.category.priority == existingCat.priority) {
+            val candidateWatts = candidate.maxNegotiatedPowerW ?: candidate.estimatedPeakW
+            val existingWatts = extractWattageFromName(existingName)
+            if (candidateWatts > existingWatts) {
+                return candidate.protocolName
+            }
+        }
+        return existingName
     }
 }

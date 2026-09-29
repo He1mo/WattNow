@@ -44,11 +44,13 @@ import kotlin.math.roundToInt
 fun CurvesTab(
     batteryState: BatteryState,
     recentPowerPoints: List<Double>,
-    recentTempPoints: List<Double> = emptyList()
+    recentTempPoints: List<Double> = emptyList(),
+    recentLevelPoints: List<Int> = emptyList()
 ) {
     val isDark = isSystemInDarkTheme()
     val scrollState = rememberScrollState()
     var chartMode by remember { mutableStateOf(ChartDisplayMode.COMBINED) }
+    var chartClearSignal by remember { mutableStateOf(0) }
 
     val maxRecentPower = remember(recentPowerPoints) { recentPowerPoints.maxOrNull() ?: 0.0 }
     val curRecentPower = remember(recentPowerPoints) { recentPowerPoints.lastOrNull() ?: 0.0 }
@@ -69,6 +71,7 @@ fun CurvesTab(
             modifier = Modifier
                 .fillMaxWidth()
                 .appleFrostedGlass(cornerRadius = 16.dp, isDark = isDark)
+                .clickable { chartClearSignal++ }
                 .padding(16.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -80,7 +83,7 @@ fun CurvesTab(
                 ) {
                     Column {
                         Text(
-                            text = "功率与温度双曲线",
+                            text = if (chartMode == ChartDisplayMode.BATTERY_ONLY) "电量变化" else "功率与温度",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp
@@ -88,7 +91,7 @@ fun CurvesTab(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "时序连续贝塞尔平滑样条",
+                            text = "最近 30 秒",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
@@ -105,7 +108,7 @@ fun CurvesTab(
                             .padding(2.dp),
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        ChartDisplayMode.values().forEach { mode ->
+                        ChartDisplayMode.entries.forEach { mode ->
                             val isSelected = chartMode == mode
                             Box(
                                 modifier = Modifier
@@ -150,12 +153,12 @@ fun CurvesTab(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "时间窗口: 实时滚动 30 秒",
+                            text = "实时变化",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                         )
                         Text(
-                            text = "滑动图表可查点",
+                            text = "拖动查看数据",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -172,25 +175,29 @@ fun CurvesTab(
                 ) {
                     val hasPower = recentPowerPoints.size >= 2
                     val hasTemp = recentTempPoints.size >= 2
+                    val hasBattery = recentLevelPoints.size >= 2
                     val canRender = when (chartMode) {
                         ChartDisplayMode.COMBINED -> hasPower || hasTemp
                         ChartDisplayMode.POWER_ONLY -> hasPower
                         ChartDisplayMode.TEMP_ONLY -> hasTemp
+                        ChartDisplayMode.BATTERY_ONLY -> hasBattery
                     }
 
                     if (canRender) {
                         DualMetricChart(
                             powerPoints = recentPowerPoints,
                             tempPoints = recentTempPoints,
+                            sampleBatteryLevels = recentLevelPoints,
                             totalDurationMillis = 30_000L,
                             displayMode = chartMode,
                             powerLineColor = MaterialTheme.colorScheme.primary,
                             tempLineColor = Color(0xFFFF9E44),
-                            showXAxis = true
+                            showXAxis = true,
+                            clearSelectionSignal = chartClearSignal
                         )
                     } else {
                         Text(
-                            text = "正在采集采样数据...",
+                            text = "正在采集数据…",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                             modifier = Modifier.align(Alignment.Center)
@@ -210,7 +217,7 @@ fun CurvesTab(
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (chartMode != ChartDisplayMode.TEMP_ONLY) {
+                        if (chartMode == ChartDisplayMode.BATTERY_ONLY) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -219,39 +226,64 @@ fun CurvesTab(
                                     modifier = Modifier
                                         .size(6.dp)
                                         .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primary)
+                                        .background(Color(0xFF32ADE6))
                                 )
                                 Text(
-                                    text = "当前 " + String.format(Locale.US, "%.1fW", curRecentPower),
+                                    text = "当前 ${batteryState.batteryLevel ?: 0}%",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = Color(0xFF32ADE6)
                                 )
                             }
-                        }
-                        if (chartMode != ChartDisplayMode.POWER_ONLY) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFFFF9E44))
-                                )
-                                Text(
-                                    text = "当前 " + String.format(Locale.US, "%.1f°C", curRecentTemp),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color(0xFFFF9E44)
-                                )
+                        } else {
+                            if (chartMode != ChartDisplayMode.TEMP_ONLY) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary)
+                                    )
+                                    Text(
+                                        text = "当前 " + String.format(Locale.US, "%.1fW", curRecentPower),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            if (chartMode != ChartDisplayMode.POWER_ONLY) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFFFF9E44))
+                                    )
+                                    Text(
+                                        text = "当前 " + String.format(Locale.US, "%.1f°C", curRecentTemp),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color(0xFFFF9E44)
+                                    )
+                                }
                             }
                         }
                     }
 
+                    val summaryText = if (chartMode == ChartDisplayMode.BATTERY_ONLY) {
+                        "当前电量 ${batteryState.batteryLevel ?: 0}%"
+                    } else {
+                        "峰值 " + String.format(Locale.US, "%.1fW", maxRecentPower) + " / " + String.format(Locale.US, "%.1f°C", maxRecentTemp)
+                    }
                     Text(
-                        text = "峰值 " + String.format(Locale.US, "%.1fW", maxRecentPower) + " / " + String.format(Locale.US, "%.1f°C", maxRecentTemp),
+                        text = summaryText,
                         fontSize = 10.5.sp,
                         fontFamily = FontFamily.SansSerif,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
@@ -267,7 +299,7 @@ fun CurvesTab(
         val batteryTemp = ts.batteryTempC ?: batteryState.temperatureC
 
         Text(
-            text = "多维硬件温度感知矩阵",
+            text = "设备温度",
             style = MaterialTheme.typography.titleSmall.copy(
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 13.sp
@@ -289,7 +321,7 @@ fun CurvesTab(
                 modifier = Modifier.weight(1f),
                 title = "CPU 核心温度",
                 value = if (ts.cpuTempC != null) String.format(Locale.US, "%.1f°C", ts.cpuTempC) else "--",
-                subtitle = "最高集群温度",
+                subtitle = "最高温度",
                 accentColor = if (ts.cpuTempC != null && ts.cpuTempC > 45.0) Color(0xFFFF9E44) else MaterialTheme.colorScheme.onSurface,
                 isDark = isDark
             )
@@ -299,7 +331,7 @@ fun CurvesTab(
                 modifier = Modifier.weight(1f),
                 title = "GPU 核心温度",
                 value = if (ts.gpuTempC != null) String.format(Locale.US, "%.1f°C", ts.gpuTempC) else "--",
-                subtitle = "图形渲染核心",
+                subtitle = "当前温度",
                 accentColor = if (ts.gpuTempC != null && ts.gpuTempC > 45.0) Color(0xFFFF9E44) else MaterialTheme.colorScheme.onSurface,
                 isDark = isDark
             )
@@ -314,9 +346,9 @@ fun CurvesTab(
             // Battery Temp Card
             AppleThermalCard(
                 modifier = Modifier.weight(1f),
-                title = "电池电芯温度",
+                title = "电池温度",
                 value = if (batteryTemp != null) String.format(Locale.US, "%.1f°C", batteryTemp) else "--",
-                subtitle = "电芯传感器",
+                subtitle = "当前温度",
                 accentColor = if (batteryTemp != null && batteryTemp > 42.0) Color(0xFFFF5252) else MaterialTheme.colorScheme.primary,
                 isDark = isDark
             )
@@ -324,9 +356,9 @@ fun CurvesTab(
             // Skin (Shell) Temp Card
             AppleThermalCard(
                 modifier = Modifier.weight(1f),
-                title = "机身外壳 (Skin)",
+                title = "机身表面",
                 value = if (ts.skinTempC != null) String.format(Locale.US, "%.1f°C", ts.skinTempC) else "--",
-                subtitle = "外壳感知温度",
+                subtitle = "当前温度",
                 accentColor = MaterialTheme.colorScheme.onSurface,
                 isDark = isDark
             )
@@ -348,7 +380,7 @@ fun CurvesTab(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "系统热节流状态 (Thermal Headroom)",
+                        text = "系统温控状态",
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                         color = MaterialTheme.colorScheme.onSurface
                     )

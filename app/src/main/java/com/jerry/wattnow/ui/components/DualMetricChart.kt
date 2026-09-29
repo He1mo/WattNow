@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,7 +52,8 @@ import kotlin.math.roundToInt
 enum class ChartDisplayMode(val label: String) {
     COMBINED("综合"),
     POWER_ONLY("功率"),
-    TEMP_ONLY("温度")
+    TEMP_ONLY("温度"),
+    BATTERY_ONLY("电量")
 }
 
 @Composable
@@ -65,20 +67,34 @@ fun DualMetricChart(
     displayMode: ChartDisplayMode = ChartDisplayMode.COMBINED,
     powerLineColor: Color = MaterialTheme.colorScheme.primary,
     tempLineColor: Color = Color(0xFFFF9E44),
+    batteryLineColor: Color = Color(0xFF32ADE6),
     customMaxPower: Double? = null,
     customMaxTemp: Double? = null,
     showScale: Boolean = true,
-    showXAxis: Boolean = true
+    showXAxis: Boolean = true,
+    clearSelectionSignal: Int = 0
 ) {
     val showPower = (displayMode == ChartDisplayMode.COMBINED || displayMode == ChartDisplayMode.POWER_ONLY) && powerPoints.isNotEmpty()
     val showTemp = (displayMode == ChartDisplayMode.COMBINED || displayMode == ChartDisplayMode.TEMP_ONLY) && tempPoints.isNotEmpty()
+    val showBattery = displayMode == ChartDisplayMode.BATTERY_ONLY && !sampleBatteryLevels.isNullOrEmpty()
 
-    if (!showPower && !showTemp) return
+    if (!showPower && !showTemp && !showBattery) return
 
-    val pointsCount = max(powerPoints.size, tempPoints.size)
+    val batteryPointsDouble = remember(sampleBatteryLevels) {
+        sampleBatteryLevels?.map { it.toDouble() } ?: emptyList()
+    }
+
+    val pointsCount = when (displayMode) {
+        ChartDisplayMode.BATTERY_ONLY -> batteryPointsDouble.size
+        else -> max(powerPoints.size, tempPoints.size)
+    }
 
     // Interactive scrubber selection state
-    var selectedIndex by remember(powerPoints.size, tempPoints.size) { mutableStateOf<Int?>(null) }
+    var selectedIndex by remember(pointsCount) { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(clearSelectionSignal, displayMode) {
+        selectedIndex = null
+    }
 
     // Power scale calculation
     val actualMaxPower = powerPoints.maxOrNull() ?: 0.0
@@ -95,6 +111,16 @@ fun DualMetricChart(
     val midTemp = (maxTemp + minTemp) / 2.0
     val tempRange = max(maxTemp - minTemp, 1.0)
 
+    // Battery level scale calculation (0% - 100% or adaptive range)
+    val actualMinBattery = batteryPointsDouble.minOrNull() ?: 0.0
+    val actualMaxBattery = batteryPointsDouble.maxOrNull() ?: 100.0
+    val minBattery = (floor(actualMinBattery / 10.0) * 10.0).coerceAtLeast(0.0)
+    val maxBattery = (ceil(actualMaxBattery / 10.0) * 10.0).coerceAtMost(100.0).let {
+        if (it <= minBattery) (minBattery + 20.0).coerceAtMost(100.0) else it
+    }
+    val midBattery = (minBattery + maxBattery) / 2.0
+    val batteryRange = max(maxBattery - minBattery, 1.0)
+
     val gridColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
     val axisTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
 
@@ -110,7 +136,6 @@ fun DualMetricChart(
             max(1.0, pointsCount * 5.0)
         }
     }
-    val totalDurationMin: Double = totalDurationSec / 60.0
 
     Row(
         modifier = modifier.fillMaxSize(),
@@ -133,6 +158,7 @@ fun DualMetricChart(
                             if (pointsCount > 1 && size.width > 0) {
                                 val ratio = (down.position.x / size.width).coerceIn(0f, 1f)
                                 selectedIndex = (ratio * (pointsCount - 1)).roundToInt()
+                                down.consume()
                             }
                             do {
                                 val event = awaitPointerEvent()
@@ -219,7 +245,23 @@ fun DualMetricChart(
                         )
                     }
 
-                    // 4. Draw Scrubber Indicator if user is touching / scrubbing
+                    // 4. Draw Battery Curve (when in battery mode)
+                    if (showBattery && batteryPointsDouble.size >= 2) {
+                        drawCurveLayer(
+                            points = batteryPointsDouble,
+                            minValue = minBattery,
+                            range = batteryRange,
+                            usableHeight = usableHeight,
+                            width = width,
+                            topPadding = topPadding,
+                            bottomY = bottomY,
+                            lineColor = batteryLineColor,
+                            fillAlphaTop = 0.22f,
+                            lineWidth = 2.5.dp.toPx()
+                        )
+                    }
+
+                    // 5. Draw Scrubber Indicator if user is touching / scrubbing
                     val currentSelection = selectedIndex
                     if (currentSelection != null && pointsCount > 1 && currentSelection in 0 until pointsCount) {
                         val stepX = width / (pointsCount - 1)
@@ -275,6 +317,28 @@ fun DualMetricChart(
                                 color = Color.White,
                                 radius = 1.5.dp.toPx(),
                                 center = Offset(scrubX, tY)
+                            )
+                        }
+
+                        // Highlight Battery point on curve
+                        if (showBattery && currentSelection < batteryPointsDouble.size) {
+                            val bVal = batteryPointsDouble[currentSelection]
+                            val bNorm = ((bVal - minBattery) / batteryRange).toFloat().coerceIn(0f, 1f)
+                            val bY = bottomY - (bNorm * usableHeight)
+                            drawCircle(
+                                color = batteryLineColor.copy(alpha = 0.35f),
+                                radius = 7.dp.toPx(),
+                                center = Offset(scrubX, bY)
+                            )
+                            drawCircle(
+                                color = batteryLineColor,
+                                radius = 4.dp.toPx(),
+                                center = Offset(scrubX, bY)
+                            )
+                            drawCircle(
+                                color = Color.White,
+                                radius = 1.5.dp.toPx(),
+                                center = Offset(scrubX, bY)
                             )
                         }
                     }
@@ -494,6 +558,32 @@ fun DualMetricChart(
                             fontFamily = FontFamily.SansSerif,
                             fontWeight = FontWeight.Medium,
                             color = tempLineColor,
+                            textAlign = TextAlign.End
+                        )
+                    }
+                    ChartDisplayMode.BATTERY_ONLY -> {
+                        Text(
+                            text = "${maxBattery.toInt()}%",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.SansSerif,
+                            fontWeight = FontWeight.Bold,
+                            color = batteryLineColor,
+                            textAlign = TextAlign.End
+                        )
+                        Text(
+                            text = "${midBattery.toInt()}%",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.SansSerif,
+                            fontWeight = FontWeight.Medium,
+                            color = axisTextColor,
+                            textAlign = TextAlign.End
+                        )
+                        Text(
+                            text = "${minBattery.toInt()}%",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.SansSerif,
+                            fontWeight = FontWeight.Bold,
+                            color = batteryLineColor,
                             textAlign = TextAlign.End
                         )
                     }

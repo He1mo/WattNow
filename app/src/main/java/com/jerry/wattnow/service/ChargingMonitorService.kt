@@ -72,7 +72,7 @@ class ChargingMonitorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        batteryMonitor = BatteryMonitor(this)
+        batteryMonitor = BatteryMonitor.getInstance(this)
         sessionManager = SessionManager.getInstance(this)
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
@@ -245,7 +245,7 @@ class ChargingMonitorService : Service() {
 
         val protocol = state.chargingProtocol
         val badge = if (protocol.shortBadge.isNotEmpty() && protocol.shortBadge != "未连接") {
-            protocol.shortBadge
+            protocol.theoreticalPowerLabel?.let { "${protocol.shortBadge} $it" } ?: protocol.shortBadge
         } else "充电中"
 
         val title = "$powerText · $badge · 电量 $levelText"

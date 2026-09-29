@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        batteryMonitor = BatteryMonitor(this)
+        batteryMonitor = BatteryMonitor.getInstance(this)
         sessionManager = SessionManager.getInstance(this)
 
         requestNotificationPermissionIfNeeded()
@@ -60,15 +60,18 @@ class MainActivity : ComponentActivity() {
         setContent {
             WattNowTheme {
                 val state by batteryMonitor.batteryState.collectAsState()
+                val activeSession by sessionManager.activeSessionFlow.collectAsState()
                 val historySessions by sessionManager.getAllCompletedSessions().collectAsState(initial = emptyList())
 
                 // 30 seconds rolling buffer (60 points at 500ms)
                 val recentPowerPoints = remember { mutableStateListOf<Double>() }
                 val recentTempPoints = remember { mutableStateListOf<Double>() }
+                val recentLevelPoints = remember { mutableStateListOf<Int>() }
                 val currentPower = state.powerW ?: 0.0
                 val currentTemp = state.temperatureC ?: (state.thermalState.batteryTempC ?: 0.0)
+                val currentLevel = state.batteryLevel ?: 0
 
-                androidx.compose.runtime.LaunchedEffect(state.powerW, state.temperatureC) {
+                androidx.compose.runtime.LaunchedEffect(state.powerW, state.temperatureC, state.batteryLevel) {
                     recentPowerPoints.add(currentPower)
                     if (recentPowerPoints.size > 60) {
                         recentPowerPoints.removeAt(0)
@@ -76,6 +79,10 @@ class MainActivity : ComponentActivity() {
                     recentTempPoints.add(currentTemp)
                     if (recentTempPoints.size > 60) {
                         recentTempPoints.removeAt(0)
+                    }
+                    recentLevelPoints.add(currentLevel)
+                    if (recentLevelPoints.size > 60) {
+                        recentLevelPoints.removeAt(0)
                     }
                 }
 
@@ -95,6 +102,8 @@ class MainActivity : ComponentActivity() {
                         batteryState = state,
                         recentPowerPoints = recentPowerPoints,
                         recentTempPoints = recentTempPoints,
+                        recentLevelPoints = recentLevelPoints,
+                        activeSession = activeSession,
                         historySessions = historySessions,
                         onSessionClick = { id -> selectedSessionId = id }
                     )

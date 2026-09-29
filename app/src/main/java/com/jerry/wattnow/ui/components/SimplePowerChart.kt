@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,12 +55,17 @@ fun SimplePowerChart(
     lineColor: Color = MaterialTheme.colorScheme.primary,
     showScale: Boolean = true,
     showXAxis: Boolean = true,
-    customMaxVal: Double? = null
+    customMaxVal: Double? = null,
+    clearSelectionSignal: Int = 0
 ) {
     if (points.isEmpty()) return
 
     val pointsCount = points.size
     var selectedIndex by remember(points.size) { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(clearSelectionSignal) {
+        selectedIndex = null
+    }
 
     val actualMax = points.maxOrNull() ?: 0.0
     val maxVal = max(customMaxVal ?: actualMax, 1.0)
@@ -102,6 +108,7 @@ fun SimplePowerChart(
                             if (pointsCount > 1 && size.width > 0) {
                                 val ratio = (down.position.x / size.width).coerceIn(0f, 1f)
                                 selectedIndex = (ratio * (pointsCount - 1)).roundToInt()
+                                down.consume()
                             }
                             do {
                                 val event = awaitPointerEvent()

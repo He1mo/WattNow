@@ -17,7 +17,18 @@ import kotlinx.coroutines.launch
 import com.jerry.wattnow.protocol.ChargingProtocolDetector
 import kotlin.math.abs
 
-class BatteryMonitor(private val context: Context) {
+class BatteryMonitor private constructor(private val context: Context) {
+
+    companion object {
+        @Volatile
+        private var instance: BatteryMonitor? = null
+
+        fun getInstance(context: Context): BatteryMonitor {
+            return instance ?: synchronized(this) {
+                instance ?: BatteryMonitor(context.applicationContext).also { instance = it }
+            }
+        }
+    }
 
     private val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
     private val thermalMonitor = ThermalMonitor(context)
@@ -123,6 +134,7 @@ class BatteryMonitor(private val context: Context) {
         val isCharging = isPlugged && (
                 statusExtra == BatteryManager.BATTERY_STATUS_CHARGING ||
                 statusExtra == BatteryManager.BATTERY_STATUS_FULL ||
+                statusExtra == BatteryManager.BATTERY_STATUS_NOT_CHARGING ||
                 statusExtra == BatteryManager.BATTERY_STATUS_UNKNOWN
         )
 
@@ -178,7 +190,9 @@ class BatteryMonitor(private val context: Context) {
             }
         } else {
             calculatedPowerW = 0.0
-            peakPowerW = 0.0
+            if (!isPlugged) {
+                peakPowerW = 0.0
+            }
         }
 
         val thermalState = thermalMonitor.getThermalState(temperatureC)

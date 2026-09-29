@@ -15,7 +15,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import com.jerry.wattnow.protocol.ChargingProtocolDetector
 import kotlin.math.max
+
+data class ActiveSessionInfo(
+    val sessionId: Long,
+    val startTime: Long,
+    val startBatteryLevel: Int,
+    val currentBatteryLevel: Int,
+    val deltaBatteryLevel: Int,
+    val peakPowerW: Double,
+    val chargerProtocol: String,
+    val durationMillis: Long,
+    val chargeRatePercentPerHour: Double? = null
+)
 
 class SessionManager private constructor(context: Context) {
 
@@ -41,6 +57,9 @@ class SessionManager private constructor(context: Context) {
 
     @Volatile
     private var latestBatteryState: BatteryState = BatteryState()
+
+    private val _activeSessionFlow = MutableStateFlow<ActiveSessionInfo?>(null)
+    val activeSessionFlow: StateFlow<ActiveSessionInfo?> = _activeSessionFlow.asStateFlow()
 
     fun getAllCompletedSessions() = dbHelper.sessionsFlow
 
@@ -71,6 +90,19 @@ class SessionManager private constructor(context: Context) {
                 if (current.isCharging) {
                     activeSessionId = uncompleted.id
                     lastSampleTime = System.currentTimeMillis()
+                    val curLvl = current.batteryLevel ?: uncompleted.startBatteryLevel
+                    val dur = System.currentTimeMillis() - uncompleted.startTime
+                    _activeSessionFlow.value = ActiveSessionInfo(
+                        sessionId = uncompleted.id,
+                        startTime = uncompleted.startTime,
+                        startBatteryLevel = uncompleted.startBatteryLevel,
+                        currentBatteryLevel = curLvl,
+                        deltaBatteryLevel = curLvl - uncompleted.startBatteryLevel,
+                        peakPowerW = uncompleted.peakPowerW,
+                        chargerProtocol = uncompleted.chargerProtocol,
+                        durationMillis = dur,
+                        chargeRatePercentPerHour = if (dur >= 60_000L) ((curLvl - uncompleted.startBatteryLevel).toDouble() / (dur / 3_600_000.0)) else null
+                    )
                     startPeriodicSampling(uncompleted.id)
                 } else {
                     closeInterruptedSession(uncompleted)
@@ -108,9 +140,10 @@ class SessionManager private constructor(context: Context) {
 
     private suspend fun startNewSession(state: BatteryState) {
         val now = System.currentTimeMillis()
+        val level = state.batteryLevel ?: 0
         val session = ChargingSessionEntity(
             startTime = now,
-            startBatteryLevel = state.batteryLevel ?: 0,
+            startBatteryLevel = level,
             startTemperatureC = state.temperatureC ?: 0.0,
             maxTemperatureC = state.temperatureC ?: 0.0,
             plugType = state.plugType.label,
@@ -122,6 +155,18 @@ class SessionManager private constructor(context: Context) {
         lastSampleTime = now
 
         val initialPower = state.powerW ?: 0.0
+        _activeSessionFlow.value = ActiveSessionInfo(
+            sessionId = id,
+            startTime = now,
+            startBatteryLevel = level,
+            currentBatteryLevel = level,
+            deltaBatteryLevel = 0,
+            peakPowerW = initialPower,
+            chargerProtocol = state.chargingProtocol.protocolName,
+            durationMillis = 0L,
+            chargeRatePercentPerHour = null
+        )
+
         if (initialPower > 0.0) {
             recordSample(id, now, state)
         }
@@ -172,12 +217,25 @@ class SessionManager private constructor(context: Context) {
         val newEnergy = currentSession.estimatedEnergyWh + addedEnergyWh
         val avgPower = dbHelper.getAvgPowerForSession(sessionId) ?: power
 
-        val currentProto = state.chargingProtocol.protocolName
-        val upgradedProtocol = if (currentProto != "未连接" && currentProto != "未知充电协议" && currentProto != "涓流充电 / 握手阶段") {
-            currentProto
+        val detectedSessionProtocol = ChargingProtocolDetector.detect(
+            isCharging = true,
+            plugType = state.plugType,
+            currentPowerW = power,
+            sessionPeakPowerW = newPeak,
+            voltageV = state.voltageV,
+            maxNegotiatedPowerW = state.chargingProtocol.maxNegotiatedPowerW
+        )
+
+        val candidateProtocol = if (detectedSessionProtocol.isSuperiorTo(state.chargingProtocol)) {
+            detectedSessionProtocol
         } else {
-            currentSession.chargerProtocol
+            state.chargingProtocol
         }
+
+        val upgradedProtocol = ChargingProtocolDetector.selectHigherProtocol(
+            currentSession.chargerProtocol,
+            candidateProtocol
+        )
 
         dbHelper.updateSession(
             currentSession.copy(
@@ -188,6 +246,23 @@ class SessionManager private constructor(context: Context) {
                 chargerProtocol = upgradedProtocol
             )
         )
+
+        val duration = timestamp - currentSession.startTime
+        val deltaLvl = level - currentSession.startBatteryLevel
+        val ratePerHour = if (duration >= 60_000L) {
+            (deltaLvl.toDouble() / (duration / 3_600_000.0))
+        } else null
+        _activeSessionFlow.value = ActiveSessionInfo(
+            sessionId = sessionId,
+            startTime = currentSession.startTime,
+            startBatteryLevel = currentSession.startBatteryLevel,
+            currentBatteryLevel = level,
+            deltaBatteryLevel = deltaLvl,
+            peakPowerW = newPeak,
+            chargerProtocol = upgradedProtocol,
+            durationMillis = duration,
+            chargeRatePercentPerHour = ratePerHour
+        )
     }
 
     private suspend fun endCurrentSession(state: BatteryState) = withContext(NonCancellable + Dispatchers.IO) {
@@ -197,6 +272,7 @@ class SessionManager private constructor(context: Context) {
         activeSessionId = null
         val now = System.currentTimeMillis()
         lastSessionEndTime = now
+        _activeSessionFlow.value = null
 
         val currentSession = dbHelper.getSessionById(sessionId) ?: return@withContext
         val duration = now - currentSession.startTime
@@ -213,12 +289,25 @@ class SessionManager private constructor(context: Context) {
         val maxPower = dbHelper.getMaxPowerForSession(sessionId) ?: currentSession.peakPowerW
         val maxTemp = dbHelper.getMaxTemperatureForSession(sessionId) ?: currentSession.maxTemperatureC
 
-        val finalProto = state.chargingProtocol.protocolName
-        val finalProtocol = if (finalProto != "未连接" && finalProto != "未知充电协议" && finalProto != "涓流充电 / 握手阶段") {
-            finalProto
+        val detectedEndProtocol = ChargingProtocolDetector.detect(
+            isCharging = true,
+            plugType = state.plugType,
+            currentPowerW = maxPower,
+            sessionPeakPowerW = maxPower,
+            voltageV = state.voltageV,
+            maxNegotiatedPowerW = state.chargingProtocol.maxNegotiatedPowerW
+        )
+
+        val candidateEndProtocol = if (detectedEndProtocol.isSuperiorTo(state.chargingProtocol)) {
+            detectedEndProtocol
         } else {
-            currentSession.chargerProtocol
+            state.chargingProtocol
         }
+
+        val finalProtocol = ChargingProtocolDetector.selectHigherProtocol(
+            currentSession.chargerProtocol,
+            candidateEndProtocol
+        )
 
         dbHelper.updateSession(
             currentSession.copy(
@@ -236,6 +325,7 @@ class SessionManager private constructor(context: Context) {
     }
 
     private suspend fun closeInterruptedSession(session: ChargingSessionEntity) {
+        _activeSessionFlow.value = null
         val samples = dbHelper.getSamplesForSession(session.id)
         val lastSample = samples.lastOrNull()
         val finishTime = lastSample?.timestamp ?: session.startTime

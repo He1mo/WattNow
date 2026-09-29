@@ -57,10 +57,12 @@ data class ThermalMetricItem(
 fun MonitorTab(
     batteryState: BatteryState,
     recentPowerPoints: List<Double>,
-    recentTempPoints: List<Double> = emptyList()
+    recentTempPoints: List<Double> = emptyList(),
+    activeSession: com.jerry.wattnow.session.ActiveSessionInfo? = null
 ) {
     val isDark = isSystemInDarkTheme()
     val scrollState = rememberScrollState()
+    var chartClearSignal by remember { mutableStateOf(0) }
 
     Column(
         modifier = Modifier
@@ -115,14 +117,31 @@ fun MonitorTab(
             val protocol = batteryState.chargingProtocol
             val isCharging = batteryState.isCharging
 
+            // Prefer session-level locked highest protocol category to prevent tapering power from downgrading display
+            val effectiveCategory = if (isCharging && activeSession != null) {
+                val sessionCat = com.jerry.wattnow.protocol.ChargingProtocolDetector.getCategoryFromProtocolName(activeSession.chargerProtocol)
+                if (sessionCat.priority > protocol.category.priority) sessionCat else protocol.category
+            } else {
+                protocol.category
+            }
+
             val statusLabel = if (isCharging) {
-                if (protocol.shortBadge.isNotEmpty() && protocol.shortBadge != "未连接") {
-                    "${batteryState.chargingStatus.label} · ${protocol.shortBadge}"
-                } else if (batteryState.plugType != PlugType.NONE && batteryState.plugType != PlugType.UNKNOWN) {
-                    "${batteryState.chargingStatus.label} (${batteryState.plugType.label})"
-                } else {
-                    batteryState.chargingStatus.label
+                val protocolLabel = when (effectiveCategory) {
+                    ProtocolCategory.XIAOMI_TURBO -> "小米澎湃秒充"
+                    ProtocolCategory.PD_PPS -> "PD/PPS"
+                    ProtocolCategory.QC_FAST -> "QC 4+"
+                    ProtocolCategory.QC_STANDARD -> "QC 3.0"
+                    ProtocolCategory.STANDARD_AC -> "标准充电"
+                    ProtocolCategory.TRICKLE_AC -> "正在识别协议"
+                    ProtocolCategory.SLOW_USB -> "USB 慢充"
+                    ProtocolCategory.USB_BC -> "USB 充电"
+                    ProtocolCategory.WIRELESS_TURBO -> "无线快充"
+                    ProtocolCategory.WIRELESS_QI -> "Qi 无线充电"
+                    ProtocolCategory.UNKNOWN -> "未知协议"
+                    ProtocolCategory.DISCHARGING -> batteryState.chargingStatus.label
                 }
+                protocol.theoreticalPowerLabel?.let { "$protocolLabel · $it" }
+                    ?: "$protocolLabel · $peakText"
             } else {
                 batteryState.chargingStatus.label
             }
@@ -137,7 +156,7 @@ fun MonitorTab(
                     .padding(horizontal = 12.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text = "$statusLabel • $peakText",
+                    text = statusLabel,
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontWeight = FontWeight.Medium,
                         fontSize = 12.sp
@@ -146,70 +165,6 @@ fun MonitorTab(
                 )
             }
 
-            // Dedicated Protocol Chip (when charging)
-            if (isCharging && protocol.category != ProtocolCategory.DISCHARGING) {
-                Spacer(modifier = Modifier.height(8.dp))
-                val (badgeBg, badgeBorder, badgeTextColor) = when (protocol.category) {
-                    ProtocolCategory.XIAOMI_TURBO -> Triple(
-                        Color(0xFFFF9500).copy(alpha = 0.15f),
-                        Color(0xFFFF9500).copy(alpha = 0.45f),
-                        Color(0xFFFFB340)
-                    )
-                    ProtocolCategory.PD_PPS -> Triple(
-                        Color(0xFF00C7BE).copy(alpha = 0.15f),
-                        Color(0xFF00C7BE).copy(alpha = 0.45f),
-                        Color(0xFF30D5C8)
-                    )
-                    ProtocolCategory.QC_FAST, ProtocolCategory.QC_STANDARD -> Triple(
-                        Color(0xFF0A84FF).copy(alpha = 0.15f),
-                        Color(0xFF0A84FF).copy(alpha = 0.45f),
-                        Color(0xFF64D2FF)
-                    )
-                    ProtocolCategory.WIRELESS_TURBO, ProtocolCategory.WIRELESS_QI -> Triple(
-                        Color(0xFFBF5AF2).copy(alpha = 0.15f),
-                        Color(0xFFBF5AF2).copy(alpha = 0.45f),
-                        Color(0xFFDA8FFF)
-                    )
-                    else -> Triple(
-                        if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f),
-                        Color.Transparent,
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = badgeBg,
-                    border = BorderStroke(1.dp, badgeBorder),
-                    modifier = Modifier.padding(horizontal = 8.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = protocol.protocolName,
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 12.sp
-                            ),
-                            color = badgeTextColor
-                        )
-                        if (protocol.details.isNotEmpty()) {
-                            Text(
-                                text = " · ${protocol.details}",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 11.sp
-                                ),
-                                color = badgeTextColor.copy(alpha = 0.8f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-            }
         }
 
         Spacer(modifier = Modifier.height(14.dp))
@@ -280,6 +235,21 @@ fun MonitorTab(
                                 .background(MaterialTheme.colorScheme.secondary)
                         )
                     }
+                    if (batteryState.isCharging && activeSession != null) {
+                        val delta = activeSession.deltaBatteryLevel
+                        val deltaStr = if (delta >= 0) "+$delta%" else "$delta%"
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "已充入 $deltaStr (${activeSession.startBatteryLevel}% → ${activeSession.currentBatteryLevel}%)",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
 
@@ -297,7 +267,7 @@ fun MonitorTab(
             ) {
                 Column {
                     Text(
-                        text = "母线电压 (Voltage)",
+                        text = "电池电压",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
@@ -310,12 +280,7 @@ fun MonitorTab(
                         ),
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "实时 PMIC 采样",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
+                    Spacer(modifier = Modifier.height(14.dp))
                 }
             }
         }
@@ -340,7 +305,7 @@ fun MonitorTab(
             ) {
                 Column {
                     Text(
-                        text = "充电电流 (Current)",
+                        text = "充电电流",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
@@ -353,12 +318,7 @@ fun MonitorTab(
                         ),
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "硬件硬滤波修正",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
+                    Spacer(modifier = Modifier.height(14.dp))
                 }
             }
 
@@ -371,25 +331,20 @@ fun MonitorTab(
             ) {
                 Column {
                     Text(
-                        text = "温控健康 (Headroom)",
+                        text = "温控状态",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = if (headroomPct != null) "$headroomPct%" else "正常",
+                        text = ts.thermalStatus.shortLabel,
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Bold,
                             fontSize = 22.sp
                         ),
                         color = if (headroomPct != null && headroomPct > 85) Color(0xFFFF9E44) else MaterialTheme.colorScheme.secondary
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = ts.thermalStatus.shortLabel,
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
+                    Spacer(modifier = Modifier.height(14.dp))
                 }
             }
         }
@@ -401,6 +356,7 @@ fun MonitorTab(
             modifier = Modifier
                 .fillMaxWidth()
                 .appleFrostedGlass(cornerRadius = 16.dp, isDark = isDark)
+                .clickable { chartClearSignal++ }
                 .padding(14.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -410,14 +366,14 @@ fun MonitorTab(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "实时功率流动轨迹",
+                        text = "实时功率",
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontWeight = FontWeight.SemiBold
                         ),
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "过去 30 秒 · 拖动查点",
+                        text = "最近 30 秒",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                     )
@@ -435,11 +391,12 @@ fun MonitorTab(
                             points = recentPowerPoints,
                             totalDurationMillis = 30_000L,
                             lineColor = MaterialTheme.colorScheme.primary,
-                            showXAxis = true
+                            showXAxis = true,
+                            clearSelectionSignal = chartClearSignal
                         )
                     } else {
                         Text(
-                            text = "正在采集高频数据...",
+                            text = "正在采集数据…",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                             modifier = Modifier.align(Alignment.Center)
@@ -495,7 +452,7 @@ fun ThermalDashboardCard(
         }
         list.add(
             ThermalMetricItem(
-                title = "热节流状态",
+                title = "温控状态",
                 value = ts.thermalStatus.shortLabel,
                 subtitle = ts.thermalStatus.label,
                 highlightColor = statusColor
@@ -518,11 +475,11 @@ fun ThermalDashboardCard(
                 else -> "已触发严重节流"
             }
         } else {
-            "Android 11+ 原生"
+            "系统评估"
         }
         list.add(
             ThermalMetricItem(
-                title = "系统热余量",
+                title = "温控余量",
                 value = headroomText,
                 subtitle = headroomSub
             )
@@ -582,7 +539,7 @@ fun ThermalDashboardCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "设备温度与热状态",
+                    text = "设备温度",
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
